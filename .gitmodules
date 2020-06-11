@@ -1,0 +1,3 @@
+[submodule "varsomdata"]
+	path = varsomdata
+	url = git@github.com:nve/varsomdata.git
