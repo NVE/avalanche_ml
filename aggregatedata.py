@@ -7,12 +7,10 @@ import csv
 import numpy as np
 import pandas
 from sklearn.svm import SVC
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.gaussian_process import GaussianProcessClassifier
-from sklearn.gaussian_process.kernels import RBF
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix
 from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import MinMaxScaler
 
 sys.path.insert(0, "./varsomdata")
 import setenvironment as se
@@ -160,17 +158,17 @@ class ForecastDataset:
         self.flat = flat
         self.prepared_data = {}
 
-    def label(self, days_weather=0, days_forecast=1, start_date=dt.date(2017, 11, 29)):
+    def label(self, column_format, days, start_date=dt.date(2017, 11, 29), b_regions=False):
         table = []
         labels = []
 
         for row in self.flat:
-            prev = None
-            if row['date'] < start_date:
+            prev = []
+            if row['date'] < start_date or (not b_regions and row['region_type'] == 'B'):
                 continue
             try:
-                for n in range(1, max(days_weather, days_forecast) + 1):
-                    prev = self.tree[row['region_id']][row['date'] - dt.timedelta(days=n)]
+                for n in range(0, days + 2):
+                    prev.append(self.tree[row['region_id']][row['date'] - dt.timedelta(days=n)])
             except KeyError:
                 continue
 
@@ -179,86 +177,68 @@ class ForecastDataset:
             }
 
             data = {}
-            # 0-indexed to include current day ("prev_0")
-            for n in range(0, days_weather + 1):
-                for key in row['weather'].keys():
-                    data["prev_{0}_{1}".format(n, key)] = prev['weather'][key]
-            for n in range(1, days_forecast + 1):
-                for key in ['danger_level', 'emergency_warning']:
-                    data["prev_{0}_{1}".format(n, key)] = prev[key]
-                for key in prev['problems'].keys():
-                    data["prev_{0}_{1}".format(n, key)] = prev['problems'][key]
+            danger_list = ['danger_level', 'emergency_warning']
+            if column_format:
+                # 0-indexed to include current day ("prev_0")
+                for n in range(0, days + 1):
+                    for key in row['weather'].keys():
+                        data[f"prev_{n}_{key}"] = prev[n]['weather'][key]
+                for n in range(1, days + 2):
+                    for key in danger_list:
+                        data[f"prev_{n}_{key}"] = prev[n][key]
+                    for key in row['problems'].keys():
+                        data[f"prev_{n}_{key}"] = prev[n]['problems'][key]
+            else:
+                for key in list(row['weather'].keys()) + danger_list + list(row['problems'].keys()):
+                    data[key] = np.array([]).astype(np.float64)
+                for n in range(0, days + 1):
+                    for key in row['weather'].keys():
+                        data[key] = np.append(data[key], prev[n]['weather'][key])
+                # Shift forecast forward one day to align attributes.
+                for n in range(1, days + 2):
+                    for key in danger_list:
+                        data[key] = np.append(data[key], prev[n][key]) if n > 0 else np.append(data[key], 0)
+                    for key in row['problems'].keys():
+                        data[key] = np.append(data[key], prev[n]['problems'][key]) if n > 0 else np.append(data[key], 0)
 
             table.append(data)
             labels.append(label)
 
         df_label = pandas.DataFrame(labels)
         df = pandas.DataFrame(table).fillna(0)
-        df = df.astype(np.float64)
-        return LabeledData(df, df_label, days_weather, days_forecast, True)
+        if column_format:
+            df = df.astype(np.float64)
+        return LabeledData(df, df_label, days, column_format)
 
 
 class LabeledData:
     is_normalized = False
 
-    def __init__(self, data, label, days_weather, days_forecast, columndata):
+    def __init__(self, data, label, days, column_format):
         self.data = data
         self.label = label
-        self.offset = data.iloc[0, :].copy().values[:] = 0
-        self.scaling = data.iloc[0, :].copy().values[:] = 1
-        self.days_weather = days_weather
-        self.days_forecast = days_forecast
-        self.columndata = columndata
-
-    def normalize(self):
-        if self.is_normalized:
-            return self.copy()
-
-        min_vec = self.data.min(axis='index')
-        max_vec = self.data.max(axis='index')
-        new_ld = self.copy()
-        new_ld.offset = min_vec
-        new_ld.scaling = max_vec - min_vec
-        new_ld.data = ((self.data - new_ld.offset) / new_ld.scaling).fillna(0)
-        new_ld.is_normalized = True
-        return new_ld
-
-    def denormalize(self):
-        if not self.is_normalized:
-            return self.copy()
-
-        new_ld = self.copy()
-        new_ld.offset = self.data.iloc[0, :].copy().values[:] = 0
-        new_ld.scaling = self.data.iloc[0, :].copy().values[:] = 1
-        new_ld.data = self.data * self.scaling + self.offset
-        new_ld.is_normalized = False
-        return new_ld
+        self.days = days
+        self.column_format = column_format
 
     def to_csv(self):
         # Write training data
-        col = "_column" if self.columndata else ""
-        pathname_data = f"{se.local_storage}data_w{self.days_weather}_f{self.days_forecast}{col}.csv"
-        pathname_label = "{0}label.csv".format(se.local_storage)
-        for (pathname, df) in [(pathname_data, self.denormalize().data), (pathname_label, self.label)]:
+        col = "column" if self.column_format else "array"
+        pathname_data = f"{se.local_storage}data_{self.days}_days_{col}.csv"
+        pathname_label = f"{se.local_storage}label.csv"
+        for (pathname, df) in [(pathname_data, self.data), (pathname_label, self.label)]:
             with open(pathname, 'w', newline='', encoding='utf-8') as csvfile:
                 writer = csv.writer(csvfile, delimiter=';', quotechar='"', quoting=csv.QUOTE_MINIMAL)
                 writer.writerow(df.columns)
                 for index, row in df.iterrows():
                     writer.writerow(row)
 
-    def copy(self):
-        new_ld = LabeledData(self.data.copy(), self.label, self.days_weather, self.days_forecast, self.columndata)
-        new_ld.offset = self.offset
-        new_ld.scaling = self.scaling
-        new_ld.is_normalized = self.is_normalized
-        return new_ld
-
 
 if __name__ == '__main__':
     print("Fetching data")
     forecast_dataset = ForecastDataset()
     print("Labeling data")
-    labeled_data = forecast_dataset.label(days_weather=1, days_forecast=1).normalize()
+    labeled_data = forecast_dataset.label(True, days=3)
+    print("Writing .csv-file")
     labeled_data.to_csv()
     print("Transforming label")
     le = LabelEncoder()
@@ -266,11 +246,13 @@ if __name__ == '__main__':
     le.fit(labels)
     labels = le.transform(labels)
     print("Running classifier")
-    X_train, X_test, y_train, y_test = train_test_split(labeled_data.data, labels, test_size=0.2, random_state=1)
-    kernel = 1.0 * RBF(1.0)
-    gpc = GaussianProcessClassifier(kernel=kernel, random_state=0)
-    gpc.fit(X_train, y_train)
-    predictions = le.inverse_transform(gpc.predict(X_test))
+    scaler = MinMaxScaler()
+    scaler.fit(labeled_data.data)
+    normalized_data = scaler.transform(labeled_data.data)
+    X_train, X_test, y_train, y_test = train_test_split(normalized_data, labels, test_size=0.2, random_state=1)
+    clf = SVC(random_state=0)
+    clf.fit(X_train, y_train)
+    predictions = le.inverse_transform(clf.predict(X_test))
     danger = le.inverse_transform(y_test)
     accuracy = (danger == predictions).sum() / danger.shape[0]
     print(confusion_matrix(danger, predictions, labels=le.classes_))
