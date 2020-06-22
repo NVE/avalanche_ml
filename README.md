@@ -4,10 +4,10 @@ Applying machine learning in the Norwegian Avalanche warning Service
 ## Cloning
 The repo uses `NVE/varsomdata` as a submodule. To clone it, use
 
-    git clone --recurse-submodules git@github.com:widforss/avalanche_ml.git
+    git clone --recurse-submodules git@github.com:NVE/avalanche_ml.git
 or
 
-    git clone --recurse-submodules https://github.com/widforss/avalanche_ml.git
+    git clone --recurse-submodules https://github.com/NVE/avalanche_ml.git
 
 ## Creating datasets
 `aggregatedata.py` includes the objects `ForecastDataset` and `LabeledData`.
@@ -36,6 +36,7 @@ is very slow.
   * If `5`, days 0-3 is used for weather, 1-4 for Varsom, 2-5 for RegObs.
 * `b_regions`: If B-regions should be included into the dataset.
   They probably should not.
+* `stars`: How many stars RegObs observers must have to be included into the dataset.
 
 ### `LabeledData`
 It contains two `DataFrame`s, the features and the labels, and supports som operations on those.
