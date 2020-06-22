@@ -71,9 +71,8 @@ TRIGGERS = {
 }
 
 REGOBS_CLASSES = {
-    13: {
-        "attr": "DangerSignTID",
-        "categories": {
+    "Faretegn": {
+        "DangerSignTID": {
             2: 'avalanches',
             3: 'noise',
             4: 'cracks',
@@ -84,27 +83,83 @@ REGOBS_CLASSES = {
             9: 'wind_drift',
         }
     },
-    25: {
-        "attr": "PropagationTName",
-        "categories": {
+    "Tester": {
+        "PropagationTName": {
             "ECTPV": "ectpv",
             "ECTP": "ectp",
             "ECTN": "ectn",
             "ECTX": "ectx",
-        }
+            "LBT": "lbt",
+            "CTV": "ctv",
+            "CTE": "cte",
+            "CTM": "ctm",
+            "CTH": "cth",
+            "CTN": "ctn",
+        },
+        "ComprTestFractureTName": {
+            "Q1": "q1",
+            "Q2": "q2",
+            "Q3": "q3",
+        },
+    },
+    "Skredaktivitet": {
+        "AvalancheExtTID": {
+            10: "dry_loose",
+            15: "wet_loose",
+            20: "dry_slab",
+            25: "wet_slab",
+            27: "glide",
+            30: "slush",
+            40: "cornice",
+        },
+        "ExposedHeightComboTID": {
+            1: "blackup",
+            2: "blackbottom",
+            3: "blackupbottom",
+            4: "blackmiddle",
+        },
     }
+}
+
+REGOBS_SCALARS = {
+    "Faretegn": {},
+    "Tester": {
+        "FractureDepth": ("FractureDepth", lambda x: x),
+        "TapsFracture": ("TapsFracture", lambda x: x),
+        "StabilityEval": ("StabilityEvalTID", lambda x: x),
+    },
+    "Skredaktivitet": {
+        "EstimatedNum": ("EstimatedNumTID", lambda x: x),
+        "AvalTrigger": ("AvalTriggerSimpleTID", lambda x: {22: 5, 60: 4, 50: 3, 40: 2, 30: 1}.get(x, 0)),
+        "DestructiveSize": ("DestructiveSizeTID", lambda x: x if 0 < x <= 5 else 0),
+        "AvalPropagation": ("AvalPropagationTID", lambda x: x),
+        "ExposedHeight1": ("ExposedHeight1", lambda x: x),
+        "ExposedHeight2": ("ExposedHeight2", lambda x: x),
+        "ValidExpositionN": ("ValidExposition", lambda x: float(x[0])),
+        "ValidExpositionNE": ("ValidExposition", lambda x: float(x[1])),
+        "ValidExpositionE": ("ValidExposition", lambda x: float(x[2])),
+        "ValidExpositionSE": ("ValidExposition", lambda x: float(x[3])),
+        "ValidExpositionS": ("ValidExposition", lambda x: float(x[4])),
+        "ValidExpositionSW": ("ValidExposition", lambda x: float(x[5])),
+        "ValidExpositionW": ("ValidExposition", lambda x: float(x[6])),
+        "ValidExpositionNW": ("ValidExposition", lambda x: float(x[7])),
+    },
 }
 
 COMPETENCE = [0, 110, 115, 120, 130, 150]
 
+REGIONS = [3001, 3002, 3003, 3004, 3005, 3006, 3007, 3008, 3009, 3010, 3011, 3012, 3013, 3014, 3015, 3016, 3017, 3018,
+           3019, 3020, 3021, 3022, 3023, 3024, 3025, 3026, 3027, 3028, 3029, 3030, 3031, 3032, 3033, 3034, 3035, 3036,
+           3037, 3038, 3039, 3040, 3041, 3042, 3043, 3044, 3045, 3046]
+
 
 class ForecastDataset:
 
-    def __init__(self, seasons=('2017-18', '2018-19', '2019-20'), regobs_types=(13, 25)):
+    def __init__(self, regobs_types, seasons=('2017-18', '2018-19', '2019-20')):
         """
         Object contains aggregated data used to generate labeled datasets.
+        :param regobs_types: Tuple/list of string names for RegObs observation types to fetch.
         :param seasons: Tuple/list of string representations of avalanche seasons to fetch.
-        :param regobs_types: Tuple/list of numerical IDs for RegObs observation types to fetch.
         """
         self.regobs_types = regobs_types
         self.tree = {}
@@ -199,7 +254,7 @@ class ForecastDataset:
             self.flat.append(row)
 
     def label(self, days, b_regions=False, stars=0):
-        """Creates a LabeledData containing relevant labels and features formatted either in a flat structure or as
+        """Creates a LabeledData containing relevant label and features formatted either in a flat structure or as
         a time series.
 
         :param days:            How far back in time values should data be included.
@@ -216,17 +271,8 @@ class ForecastDataset:
 
         :return:                LabeledData
         """
-        def regobs_transform(prev_n, id):
-            value = 0
-            try:
-                obses = [x for x in prev_n["regobs"][id] if x["competence"] >= COMPETENCE[stars]]
-                value = max(map(lambda x: x[cat_name], obses))
-            except (TypeError, IndexError, ZeroDivisionError, KeyError):
-                pass
-            return value
-
         table = []
-        labels = []
+        label = []
         days_w = {0: 1, 1: 1, 2: 1}.get(days, days - 1)
         days_v = {0: 1, 1: 2, 2: 2}.get(days, days)
         days_r = days + 1
@@ -241,29 +287,58 @@ class ForecastDataset:
             except KeyError:
                 continue
 
-            labels.append({'danger_level': entry['danger_level']})
+            label.append({'danger_level': entry['danger_level']})
 
             row = {}
+            for region in REGIONS:
+                row[(f"region_id_{region}", 0)] = float(region == entry["region_id"])
+
             # It would obviously be better code-wise to flip the loops, but we need this insertion order.
-            for key in prev[0]['weather'].keys():
+            for key in entry['weather'].keys():
                 for n in range(0, days_w):
                     row[(key, n)] = prev[n]['weather'][key]
             for n in range(1, days_v):
                 row[("danger_level", n)] = prev[n]['danger_level'] if n > 0 else 0
             for n in range(1, days_v):
                 row[("emergency_warning", n)] = prev[n]['emergency_warning'] if n > 0 else 0
-            for key in prev[0]['problems'].keys():
+            for key in entry['problems'].keys():
                 for n in range(1, days_v):
                     row[(key, n)] = prev[n]['problems'][key] if n > 0 else 0
-            for id in self.regobs_types:
-                reg_type = REGOBS_CLASSES[id]
-                for cat_name in reg_type["categories"].values():
-                    for n in range(2, days_r):
-                        attr_name = f"regobs_{_camel_to_snake(reg_type['attr'])}_{cat_name}"
-                        row[(attr_name, n)] = regobs_transform(prev[n], id)
+
+            # Filter out low-competence obses
+            def obses(obs_type):
+                return [x for x in obs_type if x["competence"] >= COMPETENCE[stars]]
+            i = 0
+            # Use 5 most competent observations, and list both categories as well as scalars
+            while i < 5:
+                # One type of observation (test, danger signs etc.) at a time
+                for regobs_type in self.regobs_types:
+                    # Go through each requested class attribute from the specified observation type
+                    for attr, cat in REGOBS_CLASSES[regobs_type].items():
+                        # We handle categories using 1-hot, so we step through each category
+                        for cat_name in cat.values():
+                            for n in range(2, days_r):
+                                value = 0
+                                try:
+                                    value = obses(prev[n]["regobs"][regobs_type])[i][cat_name]
+                                except (TypeError, IndexError, ZeroDivisionError, KeyError):
+                                    pass
+                                attr_name = f"regobs_{_camel_to_snake(attr)}_{cat_name}_{i}"
+                                row[(attr_name, n)] = value
+                    # Go through all requested scalars
+                    for attr, (regobs_attr, conv) in REGOBS_SCALARS[regobs_type].items():
+                        for n in range(2, days_r):
+                            value = 0
+                            try:
+                                value = conv(obses(prev[n]["regobs"][regobs_type])[i][regobs_attr])
+                            except (TypeError, IndexError, ZeroDivisionError, KeyError):
+                                pass
+                            attr_name = f"regobs_{_camel_to_snake(attr)}_{i}"
+                            row[(attr_name, n)] = value
+                i += 1
             table.append(row)
 
-        df_label = pandas.DataFrame(labels)
+        df_label = pandas.DataFrame(label)
         # We must force Pandas to create a MultiIndex
         table_dict = {}
         for idx, row in enumerate(table):
@@ -286,13 +361,14 @@ class LabeledData:
         :param days:            How far back in time values should data be included.
                                 If 0, only weather data for the forecast day is evaluated.
                                 If 1, day 0 is used for weather, 1 for Varsom.
-                                If 2, day 0 is used for weather, 1 for Varsom.
+                                If 2, day 0 is used for weather, 1 for Varsom, 2 for RegObs.
                                 If 3, days 0-1 is used for weather, 1-2 for Varsom, 2-3 for RegObs.
                                 If 5, days 0-3 is used for weather, 1-4 for Varsom, 2-5 for RegObs.
                                 The reason for this is to make sure that each kind of data contain
                                 the same number of data points, if we want to use some time series
                                 frameworks that are picky about such things.
-        :param regobs_types:    A tuple/list of observations to fetch from RegObs
+        :param regobs_types:    A tuple/list of strings of types of observations to fetch from RegObs.,
+                                e.g., `("Faretegn")`.
         """
         self.data = data
         self.label = label
@@ -330,14 +406,22 @@ class LabeledData:
 
     def to_timeseries(self):
         """Formats the data in a way that is parseable for e.g. `tslearn`. That is, a numpy array with
-        shape `(rows, timeseries, modalities)`.
+        shape `(rows, timeseries, features)`.
 
-        :return: numpy.ndarray
+        :return: (numpy.ndarray, list of feature names)
         """
+        headings = self.data.columns.get_level_values(0).unique()
+        number_of_features = len(headings)
+        number_of_days = self.days - 1 if self.days >= 3 else 1
         shape = self.data.shape
-        first = len(self.data.columns.get_level_values(0).unique())
-        second = self.days - 1 if self.days >= 3 else 1
-        return self.data.values.reshape(shape[0], first, second)
+        ts_array = np.zeros((shape[0], number_of_features * number_of_days), np.float64)
+        # Multiply the region labels with the size of the time dimension.
+        for idx in range(0, len(REGIONS)):
+            for day in range(0, number_of_days + 1):
+                ts_array[:, idx * number_of_days + day] = self.data.values[:, idx]
+        ts_array[:, len(REGIONS) * number_of_days - 1:] = self.data.values[:, len(REGIONS) - 1:]
+        ts_array = ts_array.reshape((shape[0], number_of_features, number_of_days))
+        return ts_array.transpose((0, 2, 1)), headings
 
     def to_csv(self):
         """ Writes a csv-file in `varsomdata/localstorage` named according to the properties of the dataset.
@@ -346,7 +430,7 @@ class LabeledData:
         # Write training data
         regobs = ""
         if len(self.regobs_types) and self.days > 2:
-            regobs = f"_regobs_{'_'.join([str(type) for type in self.regobs_types])}"
+            regobs = f"_regobs_{'_'.join([_camel_to_snake(obs_type) for obs_type in self.regobs_types])}"
         pathname_data = f"{se.local_storage}data_days_{self.days}{regobs}.csv"
         pathname_label = f"{se.local_storage}label_days_{self.days}{regobs}.csv"
         ld = self.denormalize()
@@ -365,23 +449,25 @@ def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
     if len(requested_types) == 0:
         return observations
 
-    type_str = "_".join([str(type) for type in requested_types])
-    file_name = f'{se.local_storage}regobs_{year}_{type_str}_lk1.pickle'
+    file_name = f'{se.local_storage}regobs_{year}.pickle'
     file_date_limit = dt.datetime.now() - dt.timedelta(hours=max_file_age)
     current_season = gm.get_season_from_date(dt.date.today() - dt.timedelta(30))
     number_of_records = 50
+    get_new = True
 
     try:
         # Don't fetch new data if old is cached. If older season file doesn't exists we get out via an exception.
         if dt.datetime.fromtimestamp(os.path.getmtime(file_name)) > file_date_limit or year != current_season:
-            with open(file_name, 'rb') as handle:
-                return pickle.load(handle)
+            get_new = False
     except FileNotFoundError:
         pass
 
     from_date, to_date = gm.get_dates_from_season(year=year)
 
-    if not set(REGOBS_CLASSES.keys()).issuperset(set(requested_types)):
+    req_set = set(requested_types)
+    class_set = set(list(REGOBS_CLASSES.keys()))
+    scalar_set = set(list(REGOBS_SCALARS.keys()))
+    if not class_set.issuperset(req_set) or not scalar_set.issuperset(req_set):
         raise RegObsRegTypeError()
 
     url = "https://api.nve.no/hydrology/regobs/webapi_v3.2.0/Search/Avalanche"
@@ -394,52 +480,63 @@ def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
         "NumberOfRecords": number_of_records,
         "Offset": 0
     }
-    for requested_type in requested_types:
-        query["SelectedRegistrationTypes"].append({
-            "Id": requested_type,
-            "SubTypes": []
-        })
 
-    while True:
-        try:
-            raw_obses = requests.post(url=url, json=query).json()
-        except requests.exceptions.ConnectionError:
-            time.sleep(1)
+    response = []
+    if get_new:
+        print(f"Fetching {query['Offset']}-{query['Offset'] + query['NumberOfRecords']}")
+        while True:
+            try:
+                raw_obses = requests.post(url=url, json=query).json()
+            except requests.exceptions.ConnectionError:
+                time.sleep(1)
+                continue
+            response = response + raw_obses["Results"]
 
-            continue
+            query["Offset"] += number_of_records
+            if raw_obses["ResultsInPage"] < number_of_records:
+                with open(file_name, 'wb') as handle:
+                    pickle.dump(response, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                break
+            print(f"{query['Offset']}-{query['Offset'] + query['NumberOfRecords']}/{raw_obses['TotalMatches']}")
+    else:
+        with open(file_name, 'rb') as handle:
+            response = pickle.load(handle)
 
-        for raw_obs in raw_obses["Results"]:
-            for reg in raw_obs["Registrations"]:
-                id = reg["RegistrationTid"]
-                if id not in requested_types:
-                    continue
+    for raw_obs in response:
+        for reg in raw_obs["Registrations"]:
+            obs_type = reg["RegistrationName"]
+            if obs_type not in requested_types:
+                continue
 
-                obs = {
-                    "competence": raw_obs["CompetenceLevelTid"]
-                }
-                value = reg["FullObject"][REGOBS_CLASSES[id]["attr"]]
-                for cat_id, cat_name in REGOBS_CLASSES[id]["categories"].items():
-                    obs[cat_name] = 1 if cat_id == value else 0
+            obs = {
+                "competence": raw_obs["CompetenceLevelTid"]
+            }
+            try:
+                for attr, categories in REGOBS_CLASSES[obs_type].items():
+                    value = reg["FullObject"][attr]
+                    for cat_id, cat_name in categories.items():
+                        obs[cat_name] = 1 if cat_id == value else 0
+            except KeyError:
+                pass
+            try:
+                for regobs_attr, conv in REGOBS_SCALARS[obs_type].values():
+                    obs[regobs_attr] = reg["FullObject"][regobs_attr]
+            except KeyError:
+                pass
 
-                date = dt.datetime.fromisoformat(raw_obs["DtObsTime"]).date()
-                key = (raw_obs["ForecastRegionTid"], date)
-                if key not in observations:
-                    observations[key] = {}
-                if id not in observations[key]:
-                    observations[key][id] = []
-                observations[key][id].append(obs)
-
-        query["Offset"] += number_of_records
-        if raw_obses["ResultsInPage"] < number_of_records:
-            break
+            date = dt.datetime.fromisoformat(raw_obs["DtObsTime"]).date()
+            key = (raw_obs["ForecastRegionTid"], date)
+            if key not in observations:
+                observations[key] = {}
+            if obs_type not in observations[key]:
+                observations[key][obs_type] = []
+            observations[key][obs_type].append(obs)
 
     # We want the most competent observations first
     for date_region in observations.values():
         for reg_type in date_region.values():
             reg_type.sort(key=lambda x: x['competence'], reverse=True)
 
-    with open(file_name, 'wb') as handle:
-        pickle.dump(observations, handle, protocol=pickle.HIGHEST_PROTOCOL)
     return observations
 
 
@@ -462,10 +559,10 @@ class RegObsRegTypeError(Error):
 
 if __name__ == '__main__':
     print("Fetching data (this will take a very long time the first run, then it is cached)")
-    forecast_dataset = ForecastDataset(regobs_types=(13, 25))
+    forecast_dataset = ForecastDataset(regobs_types=("Faretegn", "Tester", "Skredaktivitet"))
     print("Labeling data")
     labeled_data = forecast_dataset.label(days=3)
-    print("Writing .csv") # The .csv is always written using denormalized data.
+    print("Writing .csv")  # The .csv is always written using denormalized data.
     labeled_data.to_csv()
     print("Normalizing data")
     labeled_data = labeled_data.normalize()
