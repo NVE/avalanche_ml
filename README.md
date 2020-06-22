@@ -17,13 +17,13 @@ This object fetches data from Varsom and RegObs and inserts it into a system of 
 to facilitate the creation of `LabeledData`. The data is cached, as the response times of the API
 is very slow.
 
-#### Constructor: `ForecastDataset(seasons: Iterable<String>, regobs_types: Iterable<Int>)`
-* `seasons`: The seasons to download and use, e.g. `('2017-18', '2018-19', '2019-20')`.
+#### Constructor: `ForecastDataset(regobs_types: Iterable<Int>, seasons: Iterable<String>)`
 * `regobs_types`: What to download from RegObs. E.g., if danger signs and snowpack test are
-  wanted, use `(13, 25)`.
+  wanted, use `("Faretegn", "Tester", "Skredaktivitet")`.
+* `seasons`: The seasons to download and use, e.g. `('2017-18', '2018-19', '2019-20')`.
 
 #### Methods
-##### `label(days: Int, b_regions: Bool, stars: Int) -> LabeledData`
+##### `ForecastDataset.label(self, days: Int, b_regions: Bool, stars: Int) -> LabeledData`
 * `days`: How far back in time values should data be included. 
   The number of days actually used for each modality is not obvious.
   The reason for this is to make sure that each kind of data contain
@@ -47,25 +47,26 @@ It contains two `DataFrame`s, the features and the labels, and supports som oper
 * `regobs_types`: See `ForecastDataset()`.
 
 #### Methods
-##### `normalize() -> LabeledData`
+##### `LabeledData.normalize(self) -> LabeledData`
 Scale the data to the range [0, 1].
 
-##### `denormalize() -> LabeledData`
+##### `LabeledData.denormalize(self) -> LabeledData`
 Invert `LabeledData.normalize()`.
 
-##### `to_timeseries() -> numpy.ndarray`
-Converts `LabeledData.data` to a `numpy.ndarray` of shape `(rows, time_steps, modalities)`.
+##### `LabeledData.to_timeseries(self) -> (numpy.ndarray, list<Int>)`
+Converts `LabeledData.data` to a `numpy.ndarray` of shape `(rows, time_steps, modalities)` and a list of
+the names of the features.
 
-##### `to_csv()`'
+##### `LabeledData.to_csv(self)`'
 Writes a csv-file in `varsomdata/localstorage` named according to the properties of the dataset.
 A `label.csv` is also always written.
 
-##### `copy() -> LabeledData`
+##### `LabeledData.copy(self) -> LabeledData`
 Makes a copy of the object.
 
 #### Attributes
-* `data`: A DataFrame of the features.
-* `data`: A DataFrame of the labels.
+* `LabeledData.data`: A DataFrame of the features.
+* `LabeledData.label`: A DataFrame of the labels.
 
 ### Example program
 ```python
@@ -75,10 +76,10 @@ from sklearn.metrics import f1_score
 from sklearn.preprocessing import LabelEncoder
 
 print("Fetching data (this will take a very long time the first run, then it is cached)")
-forecast_dataset = ForecastDataset(regobs_types=(13, 25))
+forecast_dataset = ForecastDataset(regobs_types=("Faretegn", "Tester", "Skredaktivitet"))
 print("Labeling data")
 labeled_data = forecast_dataset.label(days=3)
-print("Writing .csv") # The .csv is always written using denormalized data.
+print("Writing .csv")  # The .csv is always written using denormalized data.
 labeled_data.to_csv()
 print("Normalizing data")
 labeled_data = labeled_data.normalize()
