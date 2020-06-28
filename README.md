@@ -17,7 +17,7 @@ This object fetches data from Varsom and RegObs and inserts it into a system of 
 to facilitate the creation of `LabeledData`. The data is cached, as the response times of the API
 is very slow.
 
-#### Constructor: `ForecastDataset(regobs_types: Iterable<Int>, seasons: Iterable<String>)
+#### Constructor: `ForecastDataset(regobs_types: Iterable<Int>, seasons: Iterable<String>)`
 Raises `RegObsRegTypeError` if `seasons` is specified incorrectly (if the strings are not a
 subset of the available observations that can be fetched from RegObs).
 
@@ -37,7 +37,6 @@ subset of the available observations that can be fetched from RegObs).
   * If `2`, day 0 is used for weather, 1 for Varsom.
   * If `3`, days 0-1 is used for weather, 1-2 for Varsom, 2-3 for RegObs.
   * If `5`, days 0-3 is used for weather, 1-4 for Varsom, 2-5 for RegObs.
-  They probably should not.
 
 ### `LabeledData`
 It contains two `DataFrame`s, the features and the labels, and supports som operations on those.
