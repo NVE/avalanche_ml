@@ -359,7 +359,7 @@ class ForecastDataset:
                     index = problem_types.index(problem)
                     problems[problem] = forecast.avalanche_problems[index]
                     prb[f"problem_{problem}"] = -(problems[problem].avalanche_problem_id - 4)
-                    label[(f"problem_{index}", "CLASS")] = problem
+                    label[(f"problem_{index + 1}", "CLASS")] = problem
                 else:
                     problems[problem] = gf.AvalancheWarningProblem()
                     prb[f"problem_{problem}"] = 0
