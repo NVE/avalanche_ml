@@ -57,7 +57,7 @@ CAUSES = {
     14: 'crust',
     15: 'snowdrift',
     16: 'ground-facet',
-    18: 'crust-above-facet ',
+    18: 'crust-above-facet',
     19: 'crust-below-facet',
     20: 'ground-water',
     22: 'water-layers',
