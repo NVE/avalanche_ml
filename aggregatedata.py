@@ -1,20 +1,18 @@
 # -*- coding: utf-8 -*-
 """Structures data in ML-friendly ways."""
 
-import sys
-import os
 import copy
 import datetime as dt
-import time
+import os
+import pickle
 import re
+import sys
+import time
+from collections import OrderedDict
+
 import numpy as np
 import pandas
 import requests
-import pickle
-from sklearn.svm import SVC
-from sklearn.model_selection import KFold
-from sklearn.metrics import f1_score
-from sklearn.preprocessing import LabelEncoder
 from sklearn.preprocessing import MinMaxScaler
 
 sys.path.insert(0, "./varsomdata")
@@ -26,7 +24,9 @@ from varsomdata import getmisc as gm
 
 __author__ = 'arwi'
 
-WIND_DIRECTIONS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+_pwl = re.compile("(DH|SH|FC)")
+
+DIRECTIONS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 
 WIND_SPEEDS = {
     'Stille/svak vind': 0.,
@@ -40,47 +40,70 @@ WIND_SPEEDS = {
 }
 
 PROBLEMS = {
-    3: 'new_loose',
-    5: 'wet_loose',
-    7: 'new_slab',
-    10: 'drift_slab',
-    30: 'pwl_slab',
-    37: 'pwl_slab',
-    45: 'wet_slab',
+    3: 'new-loose',
+    5: 'wet-loose',
+    7: 'new-slab',
+    10: 'drift-slab',
+    30: 'pwl-slab',
+    37: 'dpwl-slab',
+    45: 'wet-slab',
     50: 'glide'
 }
 
 CAUSES = {
-    10: 'new_wl',
-    11: 'rime',
+    10: 'new-snow',
+    11: 'hoar',
     13: 'facet',
-    14: 'ice',
-    15: 'drift',
-    16: 'gnd_facet',
-    18: 'ice_a_facet ',
-    19: 'ice_b_facet',
-    20: 'gnd_water',
-    22: 'water',
-    24: 'loose'
+    14: 'crust',
+    15: 'snowdrift',
+    16: 'ground-facet',
+    18: 'crust-above-facet',
+    19: 'crust-below-facet',
+    20: 'ground-water',
+    22: 'water-layers',
+    24: 'loose',
+    25: 'rain-temp-sun',
 }
 
-TRIGGERS = {
-    10: 0,
-    21: 1,
-    22: 2
+AVALANCHE_EXT = {
+    10: "dry_loose",
+    15: "wet_loose",
+    20: "dry_slab",
+    25: "wet_slab",
+    27: "glide",
+    30: "slush",
+    40: "cornice",
+}
+
+EXPOSED_HEIGHTS = {
+    1: "bottom-white",
+    2: "bottom-black",
+    3: "middle-white",
+    4: "middle-black",
+}
+
+REG_ENG = {
+    "Faretegn": "dangersign",
+    "Tester": "tests",
+    "Skredaktivitet": "activity",
+    "Skredhendelse": "event",
+    "Snødekke": "snowpack",
+    "Skredproblem": "problem",
+    "Skredfarevurdering": "danger",
+    "Snøprofil": "snowprofile",
 }
 
 REGOBS_CLASSES = {
     "Faretegn": {
         "DangerSignTID": {
             2: 'avalanches',
-            3: 'noise',
+            3: 'whumpf',
             4: 'cracks',
             5: 'snowfall',
-            6: 'rime',
-            7: 'temp_rise',
+            6: 'hoar',
+            7: 'temp',
             8: 'water',
-            9: 'wind_drift',
+            9: 'snowdrift',
         }
     },
     "Tester": {
@@ -96,29 +119,65 @@ REGOBS_CLASSES = {
             "CTH": "cth",
             "CTN": "ctn",
         },
-        "ComprTestFractureTName": {
-            "Q1": "q1",
-            "Q2": "q2",
-            "Q3": "q3",
-        },
     },
     "Skredaktivitet": {
-        "AvalancheExtTID": {
-            10: "dry_loose",
-            15: "wet_loose",
-            20: "dry_slab",
-            25: "wet_slab",
+        "AvalancheExtTID": AVALANCHE_EXT,
+        "ExposedHeightComboTID": EXPOSED_HEIGHTS,
+    },
+    "Skredhendelse": {
+        "AvalancheTID": {
+            11: "wet_loose",
+            12: "dry_loose",
+            21: "wet_slab",
+            22: "dry_slab",
             27: "glide",
             30: "slush",
             40: "cornice",
         },
-        "ExposedHeightComboTID": {
-            1: "blackup",
-            2: "blackbottom",
-            3: "blackupbottom",
-            4: "blackmiddle",
+        "AvalancheTriggerTID": {
+            10: "natural",
+            20: "artificial",
+            21: "artificial-skier",
+            22: "remote",
+            23: "artificial-test",
+            25: "explosive",
+            26: "human",
+            27: "snowmobile",
         },
-    }
+        "TerrainStartZoneTID": {
+            10: "steep",
+            20: "lee",
+            30: "ridge",
+            40: "gully",
+            50: "slab",
+            60: "bowl",
+            70: "forest",
+            75: "logging",
+            95: "everywhere",
+        },
+        "AvalCauseTID": CAUSES,
+    },
+    "Snødekke": {
+        "SnowSurfaceTID": {
+            50: "facet",
+            61: "hard_hoar",
+            62: "soft_hoar",
+            101: "max_loose",
+            102: "med_loose",
+            103: "min_loose",
+            104: "wet_loose",
+            105: "hard_wind",
+            106: "soft_wind",
+            107: "crust",
+        }
+    },
+    "Skredproblem": {
+        "AvalCauseTID": CAUSES,
+        "AvalancheExtTID": AVALANCHE_EXT,
+        "ExposedHeightComboTID": EXPOSED_HEIGHTS,
+    },
+    "Skredfarevurdering": {},
+    "Snøprofil": {}
 }
 
 REGOBS_SCALARS = {
@@ -127,6 +186,7 @@ REGOBS_SCALARS = {
         "FractureDepth": ("FractureDepth", lambda x: x),
         "TapsFracture": ("TapsFracture", lambda x: x),
         "StabilityEval": ("StabilityEvalTID", lambda x: x),
+        "ComprTestFracture": ("ComprTestFractureTID", lambda x: x),
     },
     "Skredaktivitet": {
         "EstimatedNum": ("EstimatedNumTID", lambda x: x),
@@ -143,6 +203,80 @@ REGOBS_SCALARS = {
         "ValidExpositionSW": ("ValidExposition", lambda x: float(x[5])),
         "ValidExpositionW": ("ValidExposition", lambda x: float(x[6])),
         "ValidExpositionNW": ("ValidExposition", lambda x: float(x[7])),
+    },
+    "Skredhendelse": {
+        "DestructiveSize": ("DestructiveSizeTID", lambda x: x if 0 < x <= 5 else 0),
+        "FractureHeight": ("FractureHeigth", lambda x: x),  # sic
+        "FractureWidth": ("FractureWidth", lambda x: x),
+        "HeightStartZone": ("HeigthStartZone", lambda x: x),  # sic
+        "HeightStopZone": ("HeigthStopZone", lambda x: x),  # sic
+        "ValidExpositionN": ("ValidExposition", lambda x: float(x[0])),
+        "ValidExpositionNE": ("ValidExposition", lambda x: float(x[1])),
+        "ValidExpositionE": ("ValidExposition", lambda x: float(x[2])),
+        "ValidExpositionSE": ("ValidExposition", lambda x: float(x[3])),
+        "ValidExpositionS": ("ValidExposition", lambda x: float(x[4])),
+        "ValidExpositionSW": ("ValidExposition", lambda x: float(x[5])),
+        "ValidExpositionW": ("ValidExposition", lambda x: float(x[6])),
+        "ValidExpositionNW": ("ValidExposition", lambda x: float(x[7])),
+    },
+    "Snødekke": {
+        "SnowDepth": ("SnowDepth", lambda x: x),
+        "NewSnowDepth24": ("NewSnowDepth24", lambda x: x),
+        "Snowline": ("Snowline", lambda x: x),
+        "NewSnowline": ("NewSnowLine", lambda x: x),
+        "HeightLimitLayeredSnow": ("HeightLimitLayeredSnow", lambda x: x),
+        "SnowDrift": ("SnowDriftTID", lambda x: x),
+        "SurfaceWaterContent": ("SurfaceWaterContentTID", lambda x: x),
+    },
+    "Skredproblem": {
+        "AvalCauseDepth": ("AvalCauseDepthTID", lambda x: x),
+        "AvalCauseLight": ("AvalCauseAttributeLightTID", lambda x: float(bool(x))),
+        "AvalCauseThin": ("AvalCauseAttributeThinTID", lambda x: float(bool(x))),
+        "AvalCauseSoft": ("AvalCauseAttributeSoftTID", lambda x: float(bool(x))),
+        "AvalCauseCrystal": ("AvalCauseAttributeCrystalTID", lambda x: float(bool(x))),
+        "AvalTrigger": ("AvalTriggerSimpleTID", lambda x: {22: 5, 60: 4, 50: 3, 40: 2, 30: 1}.get(x, 0)),
+        "DestructiveSize": ("DestructiveSizeTID", lambda x: x if 0 < x <= 5 else 0),
+        "AvalPropagation": ("AvalPropagationTID", lambda x: x),
+        "ExposedHeight1": ("ExposedHeight1", lambda x: x),
+        "ExposedHeight2": ("ExposedHeight2", lambda x: x),
+        "ValidExpositionN": ("ValidExposition", lambda x: float(x[0])),
+        "ValidExpositionNE": ("ValidExposition", lambda x: float(x[1])),
+        "ValidExpositionE": ("ValidExposition", lambda x: float(x[2])),
+        "ValidExpositionSE": ("ValidExposition", lambda x: float(x[3])),
+        "ValidExpositionS": ("ValidExposition", lambda x: float(x[4])),
+        "ValidExpositionSW": ("ValidExposition", lambda x: float(x[5])),
+        "ValidExpositionW": ("ValidExposition", lambda x: float(x[6])),
+        "ValidExpositionNW": ("ValidExposition", lambda x: float(x[7])),
+    },
+    "Skredfarevurdering": {
+        "AvalancheDanger": ("AvalancheDangerTID", lambda x: x),
+        "ForecastCorrect": ("ForecastCorrectTID", lambda x: x),
+    },
+    "Snøprofil": {
+        "DH": ("StratProfile", lambda x: float("DH" in [y["GrainFormPrimaryTName"][:2] for y in x["Layers"]])),
+        "SH": ("StratProfile", lambda x: float("SH" in [y["GrainFormPrimaryTName"][:2] for y in x["Layers"]])),
+        "FC": ("StratProfile", lambda x: float("FC" in [y["GrainFormPrimaryTName"][:2] for y in x["Layers"]])),
+        "H_PWL_F": (
+            "StratProfile",
+            lambda x: float(True in [
+                _pwl.match(y["GrainFormPrimaryTName"]) and "F" == y["HardnessTName"][0] for y in x["Layers"]
+            ]),
+        ),
+        "H_PWL_4F": (
+            "StratProfile",
+            lambda x: float(True in [
+                _pwl.match(y["GrainFormPrimaryTName"]) and "4F" in y["HardnessTName"] for y in x["Layers"]
+            ]),
+        ),
+        "H_F": ("StratProfile", lambda x: float(True in ["F" == y["HardnessTName"][0] for y in x["Layers"]])),
+        "H_4F": ("StratProfile", lambda x: float(True in ["4F" in y["HardnessTName"] for y in x["Layers"]])),
+        "W_M": ("StratProfile", lambda x: float(True in ["M" in y["WetnessTName"] for y in x["Layers"]])),
+        "W_W": ("StratProfile", lambda x: float(True in ["W" in y["WetnessTName"] for y in x["Layers"]])),
+        "W_V": ("StratProfile", lambda x: float(True in ["V" in y["WetnessTName"] for y in x["Layers"]])),
+        "W_S": ("StratProfile", lambda x: float(True in ["S" in y["WetnessTName"] for y in x["Layers"]])),
+        "T_max": ("SnowTemp", lambda x: max([y["SnowTemp"] for y in x["Layers"]], default=0)),
+        "T_mean": ("SnowTemp", lambda x: sum([y["SnowTemp"] for y in x["Layers"]]) / (len(x["Layers"]) or 1)),
+        "T_min": ("SnowTemp", lambda x: min([y["SnowTemp"] for y in x["Layers"]], default=0)),
     },
 }
 
@@ -163,14 +297,13 @@ class ForecastDataset:
         """
         self.regobs_types = regobs_types
         self.tree = {}
-        self.flat = []
 
         aw = []
-        regobs = {}
+        raw_regobs = {}
         for season in seasons:
             aw += gvp.get_all_forecasts(year=season)
             regions = gm.get_forecast_regions(year=season, get_b_regions=True)
-            regobs = {**regobs, **_get_regobs_obs(regions, season, regobs_types)}
+            raw_regobs = {**raw_regobs, **_get_regobs_obs(regions, season, regobs_types)}
 
         for forecast in aw:
 
@@ -185,6 +318,10 @@ class ForecastDataset:
                 'emergency_warning': float(forecast.emergency_warning == 'Ikke gitt')
             }
 
+            label = OrderedDict({})
+            label[('danger_level', 'CLASS')] = forecast.danger_level
+            label[('emergency_warning', 'CLASS')] = forecast.emergency_warning
+
             # Weather data
             weather = {
                 'precip_most_exposed': forecast.mountain_weather.precip_most_exposed,
@@ -198,9 +335,9 @@ class ForecastDataset:
             }
 
             # We use multiple loops to get associated values near each other in e.g. .csv-files.
-            for wind_dir in WIND_DIRECTIONS:
+            for wind_dir in DIRECTIONS:
                 weather[f"wind_dir_{wind_dir}"] = float(forecast.mountain_weather.wind_direction == wind_dir)
-            for wind_dir in WIND_DIRECTIONS:
+            for wind_dir in DIRECTIONS:
                 weather[f"wind_chg_dir_{wind_dir}"] = float(forecast.mountain_weather.change_wind_direction == wind_dir)
             hours = [0, 6, 12, 18]
             for h in hours:
@@ -214,46 +351,83 @@ class ForecastDataset:
             problem_types = [PROBLEMS.get(p.avalanche_problem_type_id, None) for p in forecast.avalanche_problems]
             problems = {}
             prb['problem_amount'] = len(forecast.avalanche_problems)
+            label[('problem_amount', 'CLASS')] = prb['problem_amount']
+            for i in range(1, 4):
+                label[(f"problem_{i}", "CLASS")] = "none"
             for problem in PROBLEMS.values():
                 if problem in problem_types:
                     index = problem_types.index(problem)
                     problems[problem] = forecast.avalanche_problems[index]
                     prb[f"problem_{problem}"] = -(problems[problem].avalanche_problem_id - 4)
+                    label[(f"problem_{index + 1}", "CLASS")] = problem
                 else:
                     problems[problem] = gf.AvalancheWarningProblem()
                     prb[f"problem_{problem}"] = 0
             for problem in PROBLEMS.values():
                 p_data = problems[problem]
+                forecast_cause = CAUSES.get(p_data.aval_cause_id, None)
                 for cause in CAUSES.values():
-                    forecast_cause = CAUSES.get(p_data.aval_cause_id, None)
                     prb[f"problem_{problem}_cause_{cause}"] = float(forecast_cause == cause)
                 prb[f"problem_{problem}_dsize"] = p_data.destructive_size_ext_id
                 prb[f"problem_{problem}_prob"] = p_data.aval_probability_id
-                prb[f"problem_{problem}_trig"] = TRIGGERS.get(p_data.aval_trigger_simple_id, 0)
+                prb[f"problem_{problem}_trig"] = {10: 0, 21: 1, 22: 2}.get(p_data.aval_trigger_simple_id, 0)
                 prb[f"problem_{problem}_dist"] = p_data.aval_distribution_id
                 prb[f"problem_{problem}_lev_max"] = p_data.exposed_height_1
                 prb[f"problem_{problem}_lev_min"] = p_data.exposed_height_2
+
+                label[(f"problem_{problem}_cause", 'CLASS')] = forecast_cause
+                label[(f"problem_{problem}_dsize", 'CLASS')] = p_data.destructive_size_ext_id
+                label[(f"problem_{problem}_prob", 'CLASS')] = p_data.aval_probability_id
+                label[(f"problem_{problem}_trig", 'CLASS')] = p_data.aval_trigger_simple_id
+                label[(f"problem_{problem}_dist", 'CLASS')] = p_data.aval_distribution_id
+                label[(f"problem_{problem}_lev_fill", 'CLASS')] = p_data.exposed_height_fill
+
+                for n in range(1, 5):
+                    prb[f"problem_{problem}_lev_fill{n}"] = float(p_data.exposed_height_fill == n)
                 for n in range(0, 8):
-                    aspect_attr_name = f"problem_{problem}_aspect_{WIND_DIRECTIONS[n]}"
+                    aspect_attr_name = f"problem_{problem}_aspect_{DIRECTIONS[n]}"
                     prb[aspect_attr_name] = float(p_data.valid_expositions[n])
+                    label[(aspect_attr_name, 'CLASS')] = prb[aspect_attr_name]
+
+                label[(f"problem_{problem}_lev_max", 'REAL')] = p_data.exposed_height_1
+                label[(f"problem_{problem}_lev_min", 'REAL')] = p_data.exposed_height_2
 
                 # Check for consistency
                 if prb[f"problem_{problem}_lev_min"] > prb[f"problem_{problem}_lev_max"]:
                     continue
 
             row['problems'] = prb
+            row['label'] = label
 
             # RegObs data
-            row['regobs'] = regobs.get((forecast.region_id, forecast.date_valid), None)
+            row['regobs'] = {}
+            current_regobs = raw_regobs.get((forecast.region_id, forecast.date_valid), {})
+            # Use 5 most competent observations, and list both categories as well as scalars
+            for obs_idx in range(0, 5):
+                # One type of observation (test, danger signs etc.) at a time
+                for regobs_type in self.regobs_types:
+                    obses = current_regobs[regobs_type] if regobs_type in current_regobs else []
+                    # Go through each requested class attribute from the specified observation type
+                    for attr, cat in REGOBS_CLASSES[regobs_type].items():
+                        # We handle categories using 1-hot, so we step through each category
+                        for cat_name in cat.values():
+                            attr_name = f"regobs_{REG_ENG[regobs_type]}_{_camel_to_snake(attr)}_{cat_name}_{obs_idx}"
+                            row['regobs'][attr_name] = obses[obs_idx][cat_name] if len(obses) > obs_idx else 0
+                    # Go through all requested scalars
+                    for attr, (regobs_attr, conv) in REGOBS_SCALARS[regobs_type].items():
+                        attr_name = f"regobs_{REG_ENG[regobs_type]}_{_camel_to_snake(attr)}_{obs_idx}"
+                        try:
+                            row['regobs'][attr_name] = conv(obses[obs_idx][regobs_attr]) if len(obses) > obs_idx else 0
+                        except TypeError:
+                            row['regobs'][attr_name] = 0
 
             # Check for consistency
             if weather['temp_min'] > weather['temp_max']:
                 continue
 
             self.tree[(forecast.region_id, forecast.date_valid)] = row
-            self.flat.append(row)
 
-    def label(self, days, b_regions=False, stars=0):
+    def label(self, days):
         """Creates a LabeledData containing relevant label and features formatted either in a flat structure or as
         a time series.
 
@@ -266,86 +440,64 @@ class ForecastDataset:
                                 The reason for this is to make sure that each kind of data contain
                                 the same number of data points, if we want to use some time series
                                 frameworks that are picky about such things.
-        :param b_regions:       Include B-regions or not.
-        :param stars:           How many stars must RegObs users have to be included?
 
         :return:                LabeledData
         """
-        table = []
-        label = []
+        label_table = OrderedDict({})
+        table = OrderedDict({})
+        df = None
+        df_label = None
         days_w = {0: 1, 1: 1, 2: 1}.get(days, days - 1)
         days_v = {0: 1, 1: 2, 2: 2}.get(days, days)
         days_r = days + 1
 
-        for entry in self.flat:
-            prev = []
-            if not b_regions and entry['region_type'] == 'B':
+        for entry_idx, entry in enumerate(self.tree.values()):
+            def prev(day_dist):
+                return self.tree[(entry['region_id'], entry['date'] - dt.timedelta(days=day_dist))]
+            # Skip B-regions for now.
+            if entry['region_type'] == 'B':
                 continue
             try:
                 for n in range(0, days_r):
-                    prev.append(self.tree[(entry['region_id'], entry['date'] - dt.timedelta(days=n))])
+                    # Just check that we can use this day.
+                    prev(n)
             except KeyError:
                 continue
 
-            label.append({'danger_level': entry['danger_level']})
-
-            row = {}
+            row = OrderedDict({})
             for region in REGIONS:
                 row[(f"region_id_{region}", 0)] = float(region == entry["region_id"])
 
             # It would obviously be better code-wise to flip the loops, but we need this insertion order.
             for key in entry['weather'].keys():
                 for n in range(0, days_w):
-                    row[(key, n)] = prev[n]['weather'][key]
+                    row[(key, n)] = prev(n)['weather'][key]
             for n in range(1, days_v):
-                row[("danger_level", n)] = prev[n]['danger_level'] if n > 0 else 0
+                row[("danger_level", n)] = prev(n)['danger_level']
             for n in range(1, days_v):
-                row[("emergency_warning", n)] = prev[n]['emergency_warning'] if n > 0 else 0
+                row[("emergency_warning", n)] = prev(n)['emergency_warning']
             for key in entry['problems'].keys():
                 for n in range(1, days_v):
-                    row[(key, n)] = prev[n]['problems'][key] if n > 0 else 0
+                    row[(key, n)] = prev(n)['problems'][key]
+            for key in entry['regobs'].keys():
+                for n in range(2, days_r):
+                    row[(key, n)] = prev(n)['regobs'][key]
 
-            # Filter out low-competence obses
-            def obses(obs_type):
-                return [x for x in obs_type if x["competence"] >= COMPETENCE[stars]]
-            i = 0
-            # Use 5 most competent observations, and list both categories as well as scalars
-            while i < 5:
-                # One type of observation (test, danger signs etc.) at a time
-                for regobs_type in self.regobs_types:
-                    # Go through each requested class attribute from the specified observation type
-                    for attr, cat in REGOBS_CLASSES[regobs_type].items():
-                        # We handle categories using 1-hot, so we step through each category
-                        for cat_name in cat.values():
-                            for n in range(2, days_r):
-                                value = 0
-                                try:
-                                    value = obses(prev[n]["regobs"][regobs_type])[i][cat_name]
-                                except (TypeError, IndexError, ZeroDivisionError, KeyError):
-                                    pass
-                                attr_name = f"regobs_{_camel_to_snake(attr)}_{cat_name}_{i}"
-                                row[(attr_name, n)] = value
-                    # Go through all requested scalars
-                    for attr, (regobs_attr, conv) in REGOBS_SCALARS[regobs_type].items():
-                        for n in range(2, days_r):
-                            value = 0
-                            try:
-                                value = conv(obses(prev[n]["regobs"][regobs_type])[i][regobs_attr])
-                            except (TypeError, IndexError, ZeroDivisionError, KeyError):
-                                pass
-                            attr_name = f"regobs_{_camel_to_snake(attr)}_{i}"
-                            row[(attr_name, n)] = value
-                i += 1
-            table.append(row)
+            for datum, data in [(row, table), (entry['label'], label_table)]:
+                # Some restructuring to make DataFrame parse the dict correctly
+                for key in datum.keys():
+                    if key not in data:
+                        data[key] = OrderedDict({})
+                    data[key][entry_idx] = datum[key]
+            # Build DataFrame iteratively to preserve system memory (floats in dicts are apparently expensive).
+            if entry_idx % 1000 == 0:
+                df_new = pandas.DataFrame(table).astype(np.float32).fillna(0)
+                df_label_new = pandas.DataFrame(label_table)
+                df = df_new if df is None else pandas.concat([df, df_new], ignore_index=True)
+                df_label = df_label_new if df is None else pandas.concat([df_label, df_label_new], ignore_index=True)
+                table = OrderedDict({})
+                label_table = OrderedDict({})
 
-        df_label = pandas.DataFrame(label)
-        # We must force Pandas to create a MultiIndex
-        table_dict = {}
-        for idx, row in enumerate(table):
-            table_dict[idx] = row
-        df = pandas.DataFrame(table_dict).transpose()
-        df = df.fillna(0)
-        df = df.astype(np.float64)
         return LabeledData(df, df_label, days, self.regobs_types)
 
 
@@ -410,8 +562,8 @@ class LabeledData:
 
         :return: (numpy.ndarray, list of feature names)
         """
-        headings = self.data.columns.get_level_values(0).unique()
-        number_of_features = len(headings)
+        columns = self.data.columns.get_level_values(0).unique()
+        number_of_features = len(columns)
         number_of_days = self.days - 1 if self.days >= 3 else 1
         shape = self.data.shape
         ts_array = np.zeros((shape[0], number_of_features * number_of_days), np.float64)
@@ -421,7 +573,7 @@ class LabeledData:
                 ts_array[:, idx * number_of_days + day] = self.data.values[:, idx]
         ts_array[:, len(REGIONS) * number_of_days - 1:] = self.data.values[:, len(REGIONS) - 1:]
         ts_array = ts_array.reshape((shape[0], number_of_features, number_of_days))
-        return ts_array.transpose((0, 2, 1)), headings
+        return ts_array.transpose((0, 2, 1)), columns
 
     def to_csv(self):
         """ Writes a csv-file in `varsomdata/localstorage` named according to the properties of the dataset.
@@ -429,8 +581,8 @@ class LabeledData:
         """
         # Write training data
         regobs = ""
-        if len(self.regobs_types) and self.days > 2:
-            regobs = f"_regobs_{'_'.join([_camel_to_snake(obs_type) for obs_type in self.regobs_types])}"
+        if len(self.regobs_types) and self.days >= 2:
+            regobs = f"_regobs_{'_'.join([REG_ENG[obs_type] for obs_type in self.regobs_types])}"
         pathname_data = f"{se.local_storage}data_days_{self.days}{regobs}.csv"
         pathname_label = f"{se.local_storage}label_days_{self.days}{regobs}.csv"
         ld = self.denormalize()
@@ -438,9 +590,30 @@ class LabeledData:
         ld.label.to_csv(pathname_label, sep=';')
 
     def copy(self):
+        """Deep copy LabeledData."""
         ld = LabeledData(self.data.copy(), self.label.copy(), self.days, copy.copy(self.regobs_types))
         ld.scaler = self.scaler
         return ld
+
+    @staticmethod
+    def from_csv(days, regobs_types):
+        """Read LabeledData from previously written .csv-file.
+
+        :param days:            How far back in time values should data be included.
+        :param regobs_types:    A tuple/list of strings of types of observations to fetch from RegObs.,
+                                e.g., `("Faretegn")`.
+        """
+        regobs = ""
+        if len(regobs_types) and days >= 2:
+            regobs = f"_regobs_{'_'.join([REG_ENG[obs_type] for obs_type in regobs_types])}"
+        pathname_data = f"{se.local_storage}data_days_{days}{regobs}.csv"
+        pathname_label = f"{se.local_storage}label_days_{days}{regobs}.csv"
+        try:
+            data = pandas.read_csv(pathname_data, sep=";", header=[0, 1], index_col=0)
+            label = pandas.read_csv(pathname_label, sep=";", header=[0, 1], index_col=0, low_memory=False)
+        except FileNotFoundError:
+            raise CsvMissingError()
+        return LabeledData(data, label, days, regobs_types)
 
 
 def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
@@ -465,9 +638,8 @@ def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
     from_date, to_date = gm.get_dates_from_season(year=year)
 
     req_set = set(requested_types)
-    class_set = set(list(REGOBS_CLASSES.keys()))
-    scalar_set = set(list(REGOBS_SCALARS.keys()))
-    if not class_set.issuperset(req_set) or not scalar_set.issuperset(req_set):
+    # Make sure all requested elements from RegObs actually have the information we need specified
+    if not min(map(lambda x: set(list(x.keys())).issuperset(req_set), [REGOBS_CLASSES, REGOBS_SCALARS, REG_ENG])):
         raise RegObsRegTypeError()
 
     url = "https://api.nve.no/hydrology/regobs/webapi_v3.2.0/Search/Avalanche"
@@ -483,7 +655,6 @@ def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
 
     response = []
     if get_new:
-        print(f"Fetching {query['Offset']}-{query['Offset'] + query['NumberOfRecords']}")
         while True:
             try:
                 raw_obses = requests.post(url=url, json=query).json()
@@ -497,7 +668,6 @@ def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
                 with open(file_name, 'wb') as handle:
                     pickle.dump(response, handle, protocol=pickle.HIGHEST_PROTOCOL)
                 break
-            print(f"{query['Offset']}-{query['Offset'] + query['NumberOfRecords']}/{raw_obses['TotalMatches']}")
     else:
         with open(file_name, 'rb') as handle:
             response = pickle.load(handle)
@@ -506,6 +676,9 @@ def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
         for reg in raw_obs["Registrations"]:
             obs_type = reg["RegistrationName"]
             if obs_type not in requested_types:
+                continue
+            # Ignore snow profiles of the old format
+            if obs_type == "Snøprofil" and "StratProfile" not in reg["FullObject"]:
                 continue
 
             obs = {
@@ -557,33 +730,11 @@ class RegObsRegTypeError(Error):
     pass
 
 
+class CsvMissingError(Error):
+    pass
+
+
 if __name__ == '__main__':
-    print("Fetching data (this will take a very long time the first run, then it is cached)")
-    forecast_dataset = ForecastDataset(regobs_types=("Faretegn", "Tester", "Skredaktivitet"))
-    print("Labeling data")
-    labeled_data = forecast_dataset.label(days=3)
-    print("Writing .csv")  # The .csv is always written using denormalized data.
-    labeled_data.to_csv()
-    print("Normalizing data")
-    labeled_data = labeled_data.normalize()
-    print("Transforming label")
-    le = LabelEncoder()
-    labels = labeled_data.label.values.ravel()
-    le.fit(labels)
-    labels = le.transform(labels)
-    print("Running classifier")
-    kf = KFold(n_splits=5, random_state=1, shuffle=True)
-    f1 = []
-    for split_idx, (train_index, test_index) in enumerate(kf.split(labeled_data.data)):
-        X_train = labeled_data.data.iloc[train_index]
-        X_test = labeled_data.data.iloc[test_index]
-        y_train = labels[train_index]
-        y_test = labels[test_index]
-        clf = SVC()
-        clf.fit(X_train, y_train)
-        predictions = le.inverse_transform(clf.predict(X_test))
-        danger = le.inverse_transform(y_test)
-        f1_part = f1_score(danger, predictions, labels=le.classes_, average='weighted')
-        f1.append(f1_part)
-        print(f"F1 split {split_idx}: {f1_part}")
-    print(f"F1 mean: {sum(f1) / len(f1)}")
+    forecast_dataset = ForecastDataset(regobs_types=list(REG_ENG.keys()))
+    for n in range(0, 8):
+        forecast_dataset.label(days=n).to_csv()

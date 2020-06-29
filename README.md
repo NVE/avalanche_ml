@@ -18,12 +18,15 @@ to facilitate the creation of `LabeledData`. The data is cached, as the response
 is very slow.
 
 #### Constructor: `ForecastDataset(regobs_types: Iterable<Int>, seasons: Iterable<String>)`
+Raises `RegObsRegTypeError` if `seasons` is specified incorrectly (if the strings are not a
+subset of the available observations that can be fetched from RegObs).
+
 * `regobs_types`: What to download from RegObs. E.g., if danger signs and snowpack test are
   wanted, use `("Faretegn", "Tester", "Skredaktivitet")`.
 * `seasons`: The seasons to download and use, e.g. `('2017-18', '2018-19', '2019-20')`.
 
 #### Methods
-##### `ForecastDataset.label(self, days: Int, b_regions: Bool, stars: Int) -> LabeledData`
+##### `ForecastDataset.label(self, days: Int) -> LabeledData`
 * `days`: How far back in time values should data be included. 
   The number of days actually used for each modality is not obvious.
   The reason for this is to make sure that each kind of data contain
@@ -34,14 +37,11 @@ is very slow.
   * If `2`, day 0 is used for weather, 1 for Varsom.
   * If `3`, days 0-1 is used for weather, 1-2 for Varsom, 2-3 for RegObs.
   * If `5`, days 0-3 is used for weather, 1-4 for Varsom, 2-5 for RegObs.
-* `b_regions`: If B-regions should be included into the dataset.
-  They probably should not.
-* `stars`: How many stars RegObs observers must have to be included into the dataset.
 
 ### `LabeledData`
 It contains two `DataFrame`s, the features and the labels, and supports som operations on those.
 
-#### Constructor: `LabeledData(data: DataFrame, label: DataFrame, days: Int, regobs_types: Iterable<Int>)`
+#### Constructor: `LabeledData(data: DataFrame, label: DataFrame, days: Int, regobs_types: Iterable<String>)`
 * `data`: A `DataFrame` containing features. Probably created by `ForecastDataset.label()`.
 * `label`: A `DataFrame` containing labels. Probably created by `ForecastDataset.label()`.
 * `days`: See `ForecastDataset.label()`.
@@ -64,6 +64,14 @@ A `label.csv` is also always written.
 
 ##### `LabeledData.copy(self) -> LabeledData`
 Makes a copy of the object.
+
+#### Static methods
+##### `LabeledData.from_csv(days: Int, regobs_types: Iterable<String>) -> LabeledData`
+Reads a csv-file from localstorage with the given properties. Raises a `CsvMissingError` if
+a csv-file with the given properties is not found in localstorage.
+
+* `days`: See `ForecastDataset.label()`.
+* `regobs_types`: See `ForecastDataset()`.
 
 #### Attributes
 * `LabeledData.data`: A DataFrame of the features.
