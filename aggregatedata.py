@@ -14,6 +14,7 @@ import numpy as np
 import pandas
 import requests
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.model_selection import KFold
 
 sys.path.insert(0, "./varsomdata")
 import setenvironment as se
@@ -25,6 +26,10 @@ from varsomdata import getmisc as gm
 __author__ = 'arwi'
 
 _pwl = re.compile("(DH|SH|FC)")
+
+CSV_VERSION = "9"
+
+_NONE = ""
 
 DIRECTIONS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 
@@ -45,7 +50,10 @@ PROBLEMS = {
     7: 'new-slab',
     10: 'drift-slab',
     30: 'pwl-slab',
-    37: 'dpwl-slab',
+    # This was safe to do when it was written (rewriting dpwl as pwl).
+    # If reverse lookups are done in the future, or if an .items() iteration
+    # is done, this may break something.
+    37: 'pwl-slab',
     45: 'wet-slab',
     50: 'glide'
 }
@@ -62,7 +70,6 @@ CAUSES = {
     20: 'ground-water',
     22: 'water-layers',
     24: 'loose',
-    25: 'rain-temp-sun',
 }
 
 AVALANCHE_EXT = {
@@ -319,8 +326,8 @@ class ForecastDataset:
             }
 
             label = OrderedDict({})
-            label[('danger_level', 'CLASS')] = forecast.danger_level
-            label[('emergency_warning', 'CLASS')] = forecast.emergency_warning
+            label[('CLASS', _NONE, 'danger_level')] = forecast.danger_level
+            label[('CLASS', _NONE, 'emergency_warning')] = forecast.emergency_warning
 
             # Weather data
             weather = {
@@ -348,24 +355,24 @@ class ForecastDataset:
 
             # Problem data
             prb = {}
-            problem_types = [PROBLEMS.get(p.avalanche_problem_type_id, None) for p in forecast.avalanche_problems]
+            problem_types = [PROBLEMS.get(p.avalanche_problem_type_id, _NONE) for p in forecast.avalanche_problems]
             problems = {}
             prb['problem_amount'] = len(forecast.avalanche_problems)
-            label[('problem_amount', 'CLASS')] = prb['problem_amount']
+            label[('CLASS', _NONE, 'problem_amount')] = prb['problem_amount']
             for i in range(1, 4):
-                label[(f"problem_{i}", "CLASS")] = "none"
+                label[('CLASS', _NONE, f"problem_{i}")] = _NONE
             for problem in PROBLEMS.values():
                 if problem in problem_types:
                     index = problem_types.index(problem)
                     problems[problem] = forecast.avalanche_problems[index]
                     prb[f"problem_{problem}"] = -(problems[problem].avalanche_problem_id - 4)
-                    label[(f"problem_{index + 1}", "CLASS")] = problem
+                    label[('CLASS', _NONE, f"problem_{index + 1}")] = problem
                 else:
                     problems[problem] = gf.AvalancheWarningProblem()
                     prb[f"problem_{problem}"] = 0
             for problem in PROBLEMS.values():
                 p_data = problems[problem]
-                forecast_cause = CAUSES.get(p_data.aval_cause_id, None)
+                forecast_cause = CAUSES.get(p_data.aval_cause_id, _NONE)
                 for cause in CAUSES.values():
                     prb[f"problem_{problem}_cause_{cause}"] = float(forecast_cause == cause)
                 prb[f"problem_{problem}_dsize"] = p_data.destructive_size_ext_id
@@ -375,22 +382,21 @@ class ForecastDataset:
                 prb[f"problem_{problem}_lev_max"] = p_data.exposed_height_1
                 prb[f"problem_{problem}_lev_min"] = p_data.exposed_height_2
 
-                label[(f"problem_{problem}_cause", 'CLASS')] = forecast_cause
-                label[(f"problem_{problem}_dsize", 'CLASS')] = p_data.destructive_size_ext_id
-                label[(f"problem_{problem}_prob", 'CLASS')] = p_data.aval_probability_id
-                label[(f"problem_{problem}_trig", 'CLASS')] = p_data.aval_trigger_simple_id
-                label[(f"problem_{problem}_dist", 'CLASS')] = p_data.aval_distribution_id
-                label[(f"problem_{problem}_lev_fill", 'CLASS')] = p_data.exposed_height_fill
+                label[('CLASS', problem, "cause")] = forecast_cause
+                label[('CLASS', problem, "dsize")] = p_data.destructive_size_ext_id
+                label[('CLASS', problem, "prob")] = p_data.aval_probability_id
+                label[('CLASS', problem, "trig")] = p_data.aval_trigger_simple_id
+                label[('CLASS', problem, "dist")] = p_data.aval_distribution_id
+                label[('CLASS', problem, "lev_fill")] = p_data.exposed_height_fill
 
                 for n in range(1, 5):
                     prb[f"problem_{problem}_lev_fill{n}"] = float(p_data.exposed_height_fill == n)
                 for n in range(0, 8):
                     aspect_attr_name = f"problem_{problem}_aspect_{DIRECTIONS[n]}"
                     prb[aspect_attr_name] = float(p_data.valid_expositions[n])
-                    label[(aspect_attr_name, 'CLASS')] = prb[aspect_attr_name]
-
-                label[(f"problem_{problem}_lev_max", 'REAL')] = p_data.exposed_height_1
-                label[(f"problem_{problem}_lev_min", 'REAL')] = p_data.exposed_height_2
+                label[('MULTI', problem, "aspect")] = p_data.valid_expositions.zfill(8)
+                label[('REAL', problem, "lev_max")] = p_data.exposed_height_1
+                label[('REAL', problem, "lev_min")] = p_data.exposed_height_2
 
                 # Check for consistency
                 if prb[f"problem_{problem}_lev_min"] > prb[f"problem_{problem}_lev_max"]:
@@ -491,8 +497,8 @@ class ForecastDataset:
                     data[key][entry_idx] = datum[key]
             # Build DataFrame iteratively to preserve system memory (floats in dicts are apparently expensive).
             if entry_idx % 1000 == 0:
-                df_new = pandas.DataFrame(table).astype(np.float32).fillna(0)
-                df_label_new = pandas.DataFrame(label_table)
+                df_new = pandas.DataFrame(table, dtype=np.float32).fillna(0)
+                df_label_new = pandas.DataFrame(label_table, dtype="U")
                 df = df_new if df is None else pandas.concat([df, df_new], ignore_index=True)
                 df_label = df_label_new if df is None else pandas.concat([df_label, df_label_new], ignore_index=True)
                 table = OrderedDict({})
@@ -523,7 +529,16 @@ class LabeledData:
                                 e.g., `("Faretegn")`.
         """
         self.data = data
-        self.label = label
+        self.label = label.sort_index(axis=1)
+        self.label = self.label.replace(_NONE, 0)
+        self.label = self.label.replace(np.nan, 0)
+        self.label['CLASS', _NONE] = self.label['CLASS', _NONE].replace(0, _NONE).values
+        self.label['MULTI'] = self.label['MULTI'].replace(0, "0").values
+        self.pred = label.copy()
+        for col in self.pred.columns:
+            self.pred[col].values[:] = 0
+        self.pred['CLASS', _NONE] = _NONE
+        self.pred['MULTI'] = "0"
         self.days = days
         self.regobs_types = regobs_types
         self.scaler.fit(self.data)
@@ -556,6 +571,71 @@ class LabeledData:
         else:
             return self.copy()
 
+    def kfold(self, k=5, shuffle=True):
+        """Returns an iterable of LabeledData-tuples. The first element is the training dataset
+        and the second is for testing.
+
+        :param k: Int: Number of folds.
+        :param shuffle: Bool: Whether rows should be shuffled before folding. Defaults to True.
+        :return: Iterable<(LabeledData, LabeledData)>
+        """
+        kf = KFold(n_splits=k, shuffle=shuffle)
+        array = []
+        for train_index, test_index in kf.split(self.data):
+            training_data = self.copy()
+            training_data.data = training_data.data.iloc[train_index]
+            training_data.label = training_data.label.iloc[train_index]
+            training_data.pred = training_data.pred.iloc[train_index]
+            testing_data = self.copy()
+            testing_data.data = testing_data.data.iloc[test_index]
+            testing_data.label = testing_data.label.iloc[test_index]
+            testing_data.pred = testing_data.pred.iloc[test_index]
+            array.append((training_data, testing_data))
+        return array
+
+    def f1(self):
+        """Get F1, precision, recall and RMSE of all labels.
+
+        :return: Series with scores of all possible labels and values.
+        """
+        dummies = self.to_dummies()
+        df = None
+        problems = [(label, "CLASS") for label in dummies["label"]["CLASS"].keys()]
+        problems += [(label, "MULTI") for label in dummies["label"]["MULTI"].keys()]
+        old_settings = np.seterr(divide='raise', invalid='raise')
+        for subprob, typ in problems:
+            truth = dummies["label"][typ][subprob]
+            pred = dummies["pred"][typ][subprob]
+            true_pos = np.sum(truth * pred, axis=0)
+            try:
+                prec = true_pos / np.sum(pred, axis=0)
+            except FloatingPointError:
+                prec = pandas.Series(index=pred.columns).fillna(0)
+            try:
+                recall = true_pos / np.sum(truth, axis=0)
+            except FloatingPointError:
+                recall = pandas.Series(index=pred.columns).fillna(0)
+            try:
+                f1 = 2 * prec * recall / (prec + recall)
+            except FloatingPointError:
+                f1 = pandas.Series(index=pred.columns).fillna(0)
+            new_df = pandas.DataFrame(index=truth.columns, columns=['f1', 'precision', 'recall', 'rmse'])
+            new_df.iloc[:, :3] = np.array([f1, prec, recall]).transpose()
+            df = new_df if df is None else pandas.concat([df, new_df], sort=True)
+
+        for subprob in dummies["label"]["REAL"].keys():
+            truth = dummies["label"]["REAL"][subprob].values.astype(np.float32)
+            pred = dummies["pred"]["REAL"][subprob].values.astype(np.float32)
+            try:
+                rmse = (np.sqrt(np.sum(np.square(pred - truth), axis=0)) / truth.shape[0])
+            except:
+                rmse = 0
+            new_df = pandas.DataFrame({"rmse": rmse}, index=dummies["label"]["REAL"][subprob].columns)
+            df = new_df if df is None else pandas.concat([df, new_df], sort=True)
+        np.seterr(**old_settings)
+
+        return df
+
     def to_timeseries(self):
         """Formats the data in a way that is parseable for e.g. `tslearn`. That is, a numpy array with
         shape `(rows, timeseries, features)`.
@@ -575,6 +655,58 @@ class LabeledData:
         ts_array = ts_array.reshape((shape[0], number_of_features, number_of_days))
         return ts_array.transpose((0, 2, 1)), columns
 
+    def to_dummies(self):
+        """Convert categorical variable into dummy/indicator variables.
+
+        :return: dict<dict<dict<pandas.DataFrame>>> (In the future this will be a flat DataFrame)
+        """
+        dummies = {}
+        for name, df in [('label', self.label), ('pred', self.pred)]:
+            dummies[name] = {"CLASS": {}, "MULTI": {}, "REAL": {}}
+            for subprob in df["CLASS"].columns.get_level_values(0).unique():
+                if name == 'label':
+                    dum = pandas.get_dummies(df["CLASS"][subprob], prefix_sep=':')
+                    dummies[name]["CLASS"][subprob] = dum
+                else:
+                    col = dummies["label"]["CLASS"][subprob].columns
+                    dum = pandas.DataFrame(pandas.get_dummies(df["CLASS"][subprob], prefix_sep=':'), columns=col)
+
+                    dummies[name]["CLASS"][subprob] = dum
+
+                    columns = dummies["label"]["CLASS"][subprob].columns.values.astype("U")
+                    idx = pandas.MultiIndex.from_tuples(
+                        [("CLASS", subprob, a[0], a[2]) for a in np.char.partition(columns, sep=":")],
+                        names=["type", "problem", "attribute", "label"]
+                    )
+                    dummies["label"]["CLASS"][subprob].columns = idx
+                    dummies["pred"]["CLASS"][subprob].columns = idx
+
+            for subprob in df['MULTI'].columns.get_level_values(0).unique():
+                multi = df['MULTI'][subprob].replace(_NONE, "0").values.astype(np.int).astype("U")
+                if name == 'label':
+                    multimax = np.max(np.char.str_len(multi), axis=0)
+                multi = np.char.zfill(multi, multimax)
+                multi = np.nan_to_num(np.array([[list(elem) for elem in row] for row in multi]))
+                multi = multi.reshape(multi.shape[0], multi.shape[1] * multi.shape[2]).astype(np.float)
+                columns = zip(df["MULTI"][subprob].columns, multimax)
+                columns = [[("MULTI", subprob, c, str(n)) for n in range(max)] for c, max in columns]
+                columns = [item for sublist in columns for item in sublist]
+                columns = pandas.MultiIndex.from_tuples(columns, names=["type", "problem", "attribute", "label"])
+                dummies[name]["MULTI"][subprob] = pandas.DataFrame(multi, index=df.index, columns=columns)
+
+            for subprob in df["REAL"].columns.get_level_values(0).unique():
+                columns = pandas.MultiIndex.from_tuples(
+                    [("REAL", subprob, a, "") for a in df["REAL"][subprob].columns],
+                    names=["type", "problem", "attribute", "label"]
+                )
+                dummies[name]["REAL"][subprob] = pandas.DataFrame(
+                    df['REAL'][subprob].values,
+                    columns=columns,
+                    index=df.index
+                )
+
+        return dummies
+
     def to_csv(self):
         """ Writes a csv-file in `varsomdata/localstorage` named according to the properties of the dataset.
         A `label.csv` is also always written.
@@ -583,16 +715,20 @@ class LabeledData:
         regobs = ""
         if len(self.regobs_types) and self.days >= 2:
             regobs = f"_regobs_{'_'.join([REG_ENG[obs_type] for obs_type in self.regobs_types])}"
-        pathname_data = f"{se.local_storage}data_days_{self.days}{regobs}.csv"
-        pathname_label = f"{se.local_storage}label_days_{self.days}{regobs}.csv"
+        pathname_data = f"{se.local_storage}data_v{CSV_VERSION}_days_{self.days}{regobs}.csv"
+        pathname_label = f"{se.local_storage}label_v{CSV_VERSION}_days_{self.days}{regobs}.csv"
         ld = self.denormalize()
         ld.data.to_csv(pathname_data, sep=';')
         ld.label.to_csv(pathname_label, sep=';')
 
     def copy(self):
-        """Deep copy LabeledData."""
-        ld = LabeledData(self.data.copy(), self.label.copy(), self.days, copy.copy(self.regobs_types))
+        """Deep copy LabeledData.
+        :return: copied LabeledData
+        """
+        ld = LabeledData(self.data.copy(deep=True), self.label.copy(deep=True), self.days, copy.copy(self.regobs_types))
+        ld.is_normalized = self.is_normalized
         ld.scaler = self.scaler
+        ld.pred = self.pred.copy(deep=True)
         return ld
 
     @staticmethod
@@ -606,11 +742,13 @@ class LabeledData:
         regobs = ""
         if len(regobs_types) and days >= 2:
             regobs = f"_regobs_{'_'.join([REG_ENG[obs_type] for obs_type in regobs_types])}"
-        pathname_data = f"{se.local_storage}data_days_{days}{regobs}.csv"
-        pathname_label = f"{se.local_storage}label_days_{days}{regobs}.csv"
+        pathname_data = f"{se.local_storage}data_v{CSV_VERSION}_days_{days}{regobs}.csv"
+        pathname_label = f"{se.local_storage}label_v{CSV_VERSION}_days_{days}{regobs}.csv"
         try:
-            data = pandas.read_csv(pathname_data, sep=";", header=[0, 1], index_col=0)
-            label = pandas.read_csv(pathname_label, sep=";", header=[0, 1], index_col=0, low_memory=False)
+            data = pandas.read_csv(pathname_data, sep=";", header=[0, 1], index_col=0, dtype=np.float32)
+            label = pandas.read_csv(pathname_label, sep=";", header=[0, 1, 2], index_col=0, low_memory=False, dtype="U")
+            columns = [(col[0], re.sub(r'Unnamed:.*', _NONE, col[1]), col[2]) for col in label.columns.tolist()]
+            label.columns = pandas.MultiIndex.from_tuples(columns)
         except FileNotFoundError:
             raise CsvMissingError()
         return LabeledData(data, label, days, regobs_types)
@@ -732,9 +870,3 @@ class RegObsRegTypeError(Error):
 
 class CsvMissingError(Error):
     pass
-
-
-if __name__ == '__main__':
-    forecast_dataset = ForecastDataset(regobs_types=list(REG_ENG.keys()))
-    for n in range(0, 8):
-        forecast_dataset.label(days=n).to_csv()
