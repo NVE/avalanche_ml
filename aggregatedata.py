@@ -16,11 +16,14 @@ import requests
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import KFold
 
+old_dir = os.getcwd()
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, "./varsomdata")
 import setenvironment as se
 from varsomdata import getforecastapi as gf
 from varsomdata import getvarsompickles as gvp
 from varsomdata import getmisc as gm
+os.chdir(old_dir)
 
 
 __author__ = 'arwi'
