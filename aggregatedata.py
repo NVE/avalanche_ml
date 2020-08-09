@@ -791,7 +791,16 @@ class LabeledData:
             dummies[name] = {"CLASS": {}, "MULTI": {}, "REAL": {}}
             for subprob in df["CLASS"].columns.get_level_values(0).unique():
                 if name == 'label':
-                    dum = pandas.get_dummies(df["CLASS"][subprob], prefix_sep=':')
+                    if subprob == _NONE:
+                        sub_df = df["CLASS"][subprob]
+                    else:
+                        sub_df = df["CLASS"][subprob].loc[
+                            df["CLASS"][_NONE]["problem_1"].eq(subprob).astype(np.int) +
+                            df["CLASS"][_NONE]["problem_2"].eq(subprob).astype(np.int) +
+                            df["CLASS"][_NONE]["problem_3"].eq(subprob).astype(np.int) > 0
+                        ]
+                    col = pandas.get_dummies(sub_df, prefix_sep=':').columns
+                    dum = pandas.DataFrame(pandas.get_dummies(df["CLASS"][subprob], prefix_sep=':'), columns=col)
                     dummies[name]["CLASS"][subprob] = dum
                 else:
                     col = dummies["label"]["CLASS"][subprob].columns
