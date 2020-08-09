@@ -1,6 +1,15 @@
 from aggregatedata import PROBLEMS, _NONE
+import pickle
+import os
+import sys
 import numpy as np
 import pandas
+
+old_dir = os.getcwd()
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, "./varsomdata")
+import setenvironment as se
+os.chdir(old_dir)
 
 __author__ = 'arwi'
 
@@ -203,6 +212,18 @@ class BulletinMachine:
         df = pandas.DataFrame(importances, index=self.X.columns)
         df.index.set_names(["feature_name", "day"], inplace=True)
         return df
+
+
+    def dump(self, identifier):
+        file_name = f'{se.local_storage}model_{identifier}.pickle'
+        with open(file_name, 'wb') as handle:
+            pickle.dump(self, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+    @staticmethod
+    def load(identifier):
+        file_name = f'{se.local_storage}model_{identifier}.pickle'
+        with open(file_name, 'rb') as handle:
+            return pickle.load(handle)
 
 
 class Error(Exception):

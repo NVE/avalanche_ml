@@ -16,7 +16,7 @@ try:
     print("Reading csv")
     labeled_data = LabeledData.from_csv(days=days, regobs_types=regobs_types)
 except CsvMissingError:
-    print("Csv midding. Fetching online data. (This takes a long time.)")
+    print("Csv missing. Fetching online data. (This takes a long time.)")
     labeled_data = ForecastDataset(regobs_types=regobs_types).label(days=days)
     labeled_data.to_csv()
 
@@ -27,10 +27,13 @@ for split_idx, (training_data, testing_data) in enumerate(labeled_data.kfold(5))
     bm = BulletinMachine(classifier_creator, classifier_creator, classifier_creator, regressor_creator)
     bm.fit(training_data, epochs=80, verbose=1)
 
+    bm.dump("demo")
+    ubm = BulletinMachine.load("demo")
+
     print(f"Testing fold: {split_idx}")
-    predicted_data = bm.predict(testing_data)
+    predicted_data = ubm.predict(testing_data)
     labeled_data.pred.loc[predicted_data.pred.index] = predicted_data.pred
-    split_imp = bm.feature_importances()
+    split_imp = ubm.feature_importances()
     importances = split_imp if importances is None else importances + (split_imp - importances) / (split_idx + 1)
     f1_series = predicted_data.f1()
     f1 = f1_series if f1 is None else f1 + (f1_series - f1) / (split_idx + 1)
