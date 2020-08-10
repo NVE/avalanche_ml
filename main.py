@@ -3,8 +3,16 @@ from machine import BulletinMachine
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import MultiTaskElasticNet
 
-def classifier_creator(indata, outdata):
-    return RandomForestClassifier(n_estimators=100)
+prim_class_weight = {
+    "danger_level": {'4': {0: 2, 1: 2}},
+}
+
+class_weight = {
+    "cause": {'new-snow': {0: 2, 1: 2}},
+}
+
+def classifier_creator(indata, outdata, class_weight=None):
+    return RandomForestClassifier(n_estimators=100, class_weight=class_weight)
 
 def regressor_creator(indata, outdata):
     return MultiTaskElasticNet()
@@ -24,7 +32,14 @@ f1 = None
 importances = None
 for split_idx, (training_data, testing_data) in enumerate(labeled_data.kfold(5)):
     print(f"Training fold: {split_idx}")
-    bm = BulletinMachine(classifier_creator, classifier_creator, classifier_creator, regressor_creator)
+    bm = BulletinMachine(
+        classifier_creator,
+        classifier_creator,
+        classifier_creator,
+        regressor_creator,
+        sk_prim_class_weight=prim_class_weight,
+        sk_class_weight=class_weight,
+    )
     bm.fit(training_data, epochs=80, verbose=1)
 
     bm.dump("demo")

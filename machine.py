@@ -14,22 +14,38 @@ os.chdir(old_dir)
 __author__ = 'arwi'
 
 class BulletinMachine:
-    def __init__(self, ml_prim_creator, ml_class_creator, ml_multi_creator, ml_real_creator):
+    def __init__(
+            self,
+            ml_prim_creator,
+            ml_class_creator,
+            ml_multi_creator,
+            ml_real_creator,
+            sk_prim_class_weight=None,
+            sk_class_weight=None,
+    ):
         """Facilitates training and prediction of avalanche warnings.
 
-        :param ml_prim_creator:  fn(in_size: Int, out_size: Int) -> classifier: Used to solve primary problems,
-                                 such as "danger_level" and "problem_n". Preferably softmax output.
-        :param ml_class_creator: fn(in_size: Int, out_size: Int) -> classifier: Used to solve secondary problems,
-                                 such as "cause" or "dist". Preferably softmax output.
-        :param ml_multi_creator: fn(in_size: Int, out_size: Int) -> classifier: Used to solve multilabel problems,
-                                 such as "aspect". Must be k-of-n-hot.
-        :param ml_real_creator:  fn(in_size: Int, out_size: Int) -> regressor: Used to solve for real numbers. Must
-                                 support multiple outputs.
+        :param ml_prim_creator:      fn(in_size: Int, out_size: Int) -> classifier: Used to solve primary problems,
+                                     such as "danger_level" and "problem_n". Preferably softmax output.
+        :param ml_class_creator:     fn(in_size: Int, out_size: Int) -> classifier: Used to solve secondary problems,
+                                     such as "cause" or "dist". Preferably softmax output.
+        :param ml_multi_creator:     fn(in_size: Int, out_size: Int) -> classifier: Used to solve multilabel problems,
+                                     such as "aspect". Must be k-of-n-hot.
+        :param ml_real_creator:      fn(in_size: Int, out_size: Int) -> regressor: Used to solve for real numbers. Must
+                                     support multiple outputs.
+        :param sk_prim_class_weight: Class weights for "danger_level", "emergency_warning" and "problem_<n>".
+                                     Either None, "balanced", "balanced_subsample" or dict of type
+                                     {"danger_level": {'4': {0: 2, 1: 2}}}. Only works for sklearn models.
+        :param sk_class_weight:      Class weights for subproblems.
+                                     Either None, "balanced", "balanced_subsample" or dict of type
+                                     {"cause": {'new-snow': {0: 2, 1: 2}}}. Only works for sklearn models.
         """
         self.ml_prim_creator = ml_prim_creator
         self.ml_class_creator = ml_class_creator
         self.ml_multi_creator = ml_multi_creator
         self.ml_real_creator = ml_real_creator
+        self.sk_prim_class_weight = sk_prim_class_weight
+        self.sk_class_weight = sk_class_weight
         self.machines_class = {}
         self.machines_multi = {}
         self.machines_real = {}
@@ -64,9 +80,11 @@ class BulletinMachine:
             if subprob == "":
                 idx = [True] * dummy.shape[0]
                 machine = self.ml_prim_creator
+                class_weight = self.sk_prim_class_weight
             else:
                 idx = np.any(np.char.equal(prob_cols.values.astype("U"), subprob), axis=1)
                 machine = self.ml_class_creator
+                class_weight = self.sk_class_weight
             try:
                 self.machines_class[subprob] = machine(self.X.shape[1:], len(dummy.columns))
             except ValueError:
@@ -77,6 +95,12 @@ class BulletinMachine:
                 try:
                     self.machines_class[subprob].fit(self.X.loc[idx], dummy.loc[idx], epochs=epochs, verbose=verbose)
                 except TypeError:
+                    prepared_weight = prepare_class_weight_(class_weight, dummy)
+                    self.machines_class[subprob] = machine(
+                        self.X.shape[1:],
+                        len(dummy.columns),
+                        class_weight=prepared_weight
+                    )
                     self.machines_class[subprob].fit(self.X.loc[idx], dummy.loc[idx])
         for subprob, dummy in dummies['label']["MULTI"].items():
             idx = np.any(np.char.equal(prob_cols.values.astype("U"), subprob), axis=1)
@@ -240,3 +264,25 @@ class NotFittedError(Error):
 
 class FeatureImportanceMissingError(Error):
     pass
+
+def prepare_class_weight_(class_weight, dummies):
+    if class_weight is None:
+        return None
+    if class_weight == "balanced" or class_weight == "balanced_subsample":
+        return class_weight
+
+    prepared_weight = []
+    for column in dummies.columns:
+        type, problem, attribute, label = column
+        if attribute in class_weight and label in class_weight[attribute]:
+            weight = class_weight[attribute][label]
+            if len(dummies[type, problem, attribute].columns) == 1:
+                prepared_weight.append({1: weight[1]})
+            else:
+                prepared_weight.append(weight)
+        else:
+            if len(dummies[type, problem, attribute].columns) == 1:
+                prepared_weight.append({1: 1})
+            else:
+                prepared_weight.append({0: 1, 1: 1})
+    return prepared_weight
