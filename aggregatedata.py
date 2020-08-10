@@ -553,6 +553,11 @@ class ForecastDataset:
                         except TypeError:
                             row['regobs'][attr_name] = 0
 
+            row['accuracy'] = map(
+                lambda x: {0: 0, 1: 1, 2: -1, 3: -1}[x['ForecastCorrectTID']],
+                current_regobs['Skredfarevurdering']
+            ) if 'Skredfarevurdering' in current_regobs else []
+
             # Check for consistency
             if weather['temp_min'] > weather['temp_max']:
                 continue
@@ -577,8 +582,10 @@ class ForecastDataset:
         """
         label_table = OrderedDict({})
         table = OrderedDict({})
+        row_weight = OrderedDict({})
         df = None
         df_label = None
+        df_weight = None
         days_w = {0: 1, 1: 1, 2: 1}.get(days, days - 1)
         days_v = {0: 1, 1: 2, 2: 2}.get(days, days)
         days_r = days + 1
@@ -615,6 +622,14 @@ class ForecastDataset:
                 for n in range(2, days_r):
                     row[(key, n)] = prev(n)['regobs'][key]
 
+            weight_sum = sum(entry['accuracy'])
+            if weight_sum < 0:
+                row_weight[(entry['date'].isoformat(), entry['region_id'])] = 1 / 2
+            elif weight_sum == 0:
+                row_weight[(entry['date'].isoformat(), entry['region_id'])] = 1
+            elif weight_sum > 0:
+                row_weight[(entry['date'].isoformat(), entry['region_id'])] = 2
+
             for datum, data in [(row, table), (entry['label'], label_table)]:
                 # Some restructuring to make DataFrame parse the dict correctly
                 for key in datum.keys():
@@ -625,23 +640,27 @@ class ForecastDataset:
             if entry_idx % 1000 == 0:
                 df_new = pandas.DataFrame(table, dtype=np.float32).fillna(0)
                 df_label_new = pandas.DataFrame(label_table, dtype="U")
-                df = df_new if df is None else pandas.concat([df, df_new], ignore_index=False)
-                df_label = df_label_new if df is None else pandas.concat([df_label, df_label_new], ignore_index=False)
+                df_weight_new = pandas.Series(row_weight)
+                df = df_new if df is None else pandas.concat([df, df_new])
+                df_label = df_label_new if df is None else pandas.concat([df_label, df_label_new])
+                df_weight = df_weight_new if df is None else pandas.concat([df_weight, df_weight_new])
                 table = OrderedDict({})
                 label_table = OrderedDict({})
+                row_weight = OrderedDict({})
 
-        return LabeledData(df, df_label, days, self.regobs_types)
+        return LabeledData(df, df_label, df_weight, days, self.regobs_types)
 
 
 class LabeledData:
     is_normalized = False
     scaler = MinMaxScaler()
 
-    def __init__(self, data, label, days, regobs_types):
+    def __init__(self, data, label, row_weight, days, regobs_types):
         """Holds labels and features.
 
         :param data:            A DataFrame containing the features of the dataset.
         :param label:           DataFrame of labels.
+        :param row_weight:      Series containing row weights
         :param days:            How far back in time values should data be included.
                                 If 0, only weather data for the forecast day is evaluated.
                                 If 1, day 0 is used for weather, 1 for Varsom.
@@ -655,6 +674,7 @@ class LabeledData:
                                 e.g., `("Faretegn")`.
         """
         self.data = data
+        self.row_weight = row_weight
         self.label = label.sort_index(axis=1)
         self.label = self.label.replace(_NONE, 0)
         self.label = self.label.replace(np.nan, 0)
@@ -712,10 +732,12 @@ class LabeledData:
             training_data.data = training_data.data.iloc[train_index]
             training_data.label = training_data.label.iloc[train_index]
             training_data.pred = training_data.pred.iloc[train_index]
+            training_data.row_weight = training_data.row_weight.iloc[train_index]
             testing_data = self.copy()
             testing_data.data = testing_data.data.iloc[test_index]
             testing_data.label = testing_data.label.iloc[test_index]
             testing_data.pred = testing_data.pred.iloc[test_index]
+            testing_data.row_weight = testing_data.row_weight.iloc[test_index]
             array.append((training_data, testing_data))
         return array
 
@@ -852,9 +874,11 @@ class LabeledData:
             regobs = f"_regobs_{'_'.join([REG_ENG[obs_type] for obs_type in self.regobs_types])}"
         pathname_data = f"{se.local_storage}data_v{CSV_VERSION}_days_{self.days}{regobs}.csv"
         pathname_label = f"{se.local_storage}label_v{CSV_VERSION}_days_{self.days}{regobs}.csv"
+        pathname_weight = f"{se.local_storage}weight_v{CSV_VERSION}_days_{self.days}{regobs}.csv"
         ld = self.denormalize()
         ld.data.to_csv(pathname_data, sep=';')
         ld.label.to_csv(pathname_label, sep=';')
+        ld.row_weight.to_csv(pathname_weight, sep=';', header=False)
 
     def to_aw(self):
         """Convert predictions to AvalancheWarnings.
@@ -902,7 +926,13 @@ class LabeledData:
         """Deep copy LabeledData.
         :return: copied LabeledData
         """
-        ld = LabeledData(self.data.copy(deep=True), self.label.copy(deep=True), self.days, copy.copy(self.regobs_types))
+        ld = LabeledData(
+            self.data.copy(deep=True),
+            self.label.copy(deep=True),
+            self.row_weight.copy(deep=True),
+            self.days,
+            copy.copy(self.regobs_types)
+        )
         ld.is_normalized = self.is_normalized
         ld.scaler = self.scaler
         ld.pred = self.pred.copy(deep=True)
@@ -921,14 +951,16 @@ class LabeledData:
             regobs = f"_regobs_{'_'.join([REG_ENG[obs_type] for obs_type in regobs_types])}"
         pathname_data = f"{se.local_storage}data_v{CSV_VERSION}_days_{days}{regobs}.csv"
         pathname_label = f"{se.local_storage}label_v{CSV_VERSION}_days_{days}{regobs}.csv"
+        pathname_weight = f"{se.local_storage}weight_v{CSV_VERSION}_days_{days}{regobs}.csv"
         try:
             data = pandas.read_csv(pathname_data, sep=";", header=[0, 1], index_col=[0, 1])
             label = pandas.read_csv(pathname_label, sep=";", header=[0, 1, 2], index_col=[0, 1], low_memory=False, dtype="U")
+            row_weight = pandas.read_csv(pathname_weight, sep=";", header=None, index_col=[0, 1], low_memory=False)
             columns = [(col[0], re.sub(r'Unnamed:.*', _NONE, col[1]), col[2]) for col in label.columns.tolist()]
             label.columns = pandas.MultiIndex.from_tuples(columns)
         except FileNotFoundError:
             raise CsvMissingError()
-        return LabeledData(data, label, days, regobs_types)
+        return LabeledData(data, label, row_weight, days, regobs_types)
 
 
 def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
