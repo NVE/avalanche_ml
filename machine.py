@@ -107,6 +107,7 @@ class BulletinMachine:
                         dummy.loc[idx],
                         sample_weight=np.ravel(self.row_weight.loc[idx])
                     )
+  
         for subprob, dummy in dummies['label']["MULTI"].items():
             idx = np.any(np.char.equal(prob_cols.values.astype("U"), subprob), axis=1)
             self.machines_multi[subprob] = self.ml_multi_creator(self.X.shape[1:], len(dummy.columns))
