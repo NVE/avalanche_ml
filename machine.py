@@ -1,6 +1,15 @@
 from aggregatedata import PROBLEMS, _NONE
+import pickle
+import os
+import sys
 import numpy as np
 import pandas
+
+old_dir = os.getcwd()
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, "./varsomdata")
+import setenvironment as se
+os.chdir(old_dir)
 
 __author__ = 'arwi'
 
@@ -65,6 +74,7 @@ class BulletinMachine:
         dummies = labeled_data.to_dummies()
         self.dummies = dummies
         self.X = labeled_data.data
+        self.row_weight = labeled_data.row_weight
         prob_cols =\
             self.y.loc[:, [name.startswith("problem_") for name in self.y.columns.get_level_values(2)]]["CLASS", ""]
         for subprob, dummy in dummies['label']["CLASS"].items():
@@ -92,7 +102,12 @@ class BulletinMachine:
                         len(dummy.columns),
                         class_weight=prepared_weight
                     )
-                    self.machines_class[subprob].fit(self.X.loc[idx], dummy.loc[idx])
+                    self.machines_class[subprob].fit(
+                        self.X.loc[idx],
+                        dummy.loc[idx],
+                        sample_weight=np.ravel(self.row_weight.loc[idx])
+                    )
+  
         for subprob, dummy in dummies['label']["MULTI"].items():
             idx = np.any(np.char.equal(prob_cols.values.astype("U"), subprob), axis=1)
             self.machines_multi[subprob] = self.ml_multi_creator(self.X.shape[1:], len(dummy.columns))
@@ -100,7 +115,11 @@ class BulletinMachine:
                 try:
                     self.machines_multi[subprob].fit(self.X.loc[idx], dummy.loc[idx], epochs=epochs, verbose=verbose)
                 except TypeError:
-                    self.machines_multi[subprob].fit(self.X.loc[idx], dummy.loc[idx])
+                    self.machines_multi[subprob].fit(
+                        self.X.loc[idx],
+                        dummy.loc[idx],
+                        sample_weight=np.ravel(self.row_weight.loc[idx])
+                    )
         for subprob, values in dummies['label']["REAL"].items():
             idx = np.any(np.char.equal(prob_cols.values.astype("U"), subprob), axis=1)
             self.machines_real[subprob] = self.ml_real_creator(self.X.shape[1:], len(dummy.columns))
@@ -227,6 +246,18 @@ class BulletinMachine:
         df = pandas.DataFrame(importances, index=self.X.columns)
         df.index.set_names(["feature_name", "day"], inplace=True)
         return df
+
+
+    def dump(self, identifier):
+        file_name = f'{se.local_storage}model_{identifier}.pickle'
+        with open(file_name, 'wb') as handle:
+            pickle.dump(self, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+    @staticmethod
+    def load(identifier):
+        file_name = f'{se.local_storage}model_{identifier}.pickle'
+        with open(file_name, 'rb') as handle:
+            return pickle.load(handle)
 
 
 class Error(Exception):

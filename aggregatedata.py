@@ -16,6 +16,7 @@ import requests
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import KFold
 
+
 old_dir = os.getcwd()
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, "./varsomdata")
@@ -30,7 +31,7 @@ __author__ = 'arwi'
 
 _pwl = re.compile("(DH|SH|FC)")
 
-CSV_VERSION = "9"
+CSV_VERSION = "19"
 
 _NONE = ""
 
@@ -290,6 +291,131 @@ REGOBS_SCALARS = {
     },
 }
 
+LABEL_GLOBAL = {
+    "danger_level": {
+        "ext_attr": ["danger_level", "danger_level_name"],
+        "values": {
+            '1': [1, "1 liten"],
+            '2': [2, "2 Moderat"],
+            '3': [3, "3 Betydelig"],
+            '4': [4, "4 Stor"],
+            '5': [5, "5 Meget stor"]
+        }
+    },
+    "emergency_warning": {
+        "ext_attr": ["emergency_warning"],
+        "values": {
+           "Ikke gitt": ["Ikke gitt"],
+           "Naturlig utløste skred": ["Naturlig utløste skred"],
+        }
+    }
+}
+
+LABEL_PROBLEM_PRIMARY = {
+    "ext_attr": [
+        "avalanche_problem_type_id",
+        "avalanche_problem_type_name",
+        "avalanche_type_id",
+        "avalanche_type_name",
+        "avalanche_ext_id",
+        "avalanche_ext_name"
+    ],
+    "values": {
+        _NONE: [0, "", 0, "", 0, ""],
+        "new-loose": [3, "Nysnø (løssnøskred)", 20, "Løssnøskred", 10, "Tørre løssnøskred"],
+        "wet-loose": [5, "Våt snø (løssnøskred)", 20, "Løssnøskred", 15, "Våte løssnøskred"],
+        "new-slab": [7, "Nysnø (flakskred)", 10, "Flakskred", 20, "Tørre flakskred"],
+        "drift-slab": [10, "Fokksnø (flakskred)", 10, "Flakskred", 20, "Tørre flakskred"],
+        "pwl-slab": [30, "Vedvarende svakt lag (flakskred)", 10, "Flakskred", 20, "Tørre flakskred"],
+        "wet-slab": [45, "Våt snø (flakskred)", 10, "Flakskred", 25, "Våte flakskred"],
+        "glide": [50, "Glideskred", 10, "Flakskred", 25, "Våte flakskred"]
+    }
+}
+
+LABEL_PROBLEM = {
+    "cause": {
+        "ext_attr": ["aval_cause_id", "aval_cause_name"],
+        "values": {
+            "0": [0, ""],
+            "new-snow": [10, "Nedføyket svakt lag med nysnø"],
+            "hoar": [11, "Nedsnødd eller nedføyket overflaterim"],
+            "facet": [13, "Nedsnødd eller nedføyket kantkornet snø"],
+            "crust": [14, "Dårlig binding mellom glatt skare og overliggende snø"],
+            "snowdrift": [15, "Dårlig binding mellom lag i fokksnøen"],
+            "ground-facet": [16, "Kantkornet snø ved bakken"],
+            "crust-above-facet": [18, "Kantkornet snø over skarelag"],
+            "crust-below-facet": [19, "Kantkornet snø under skarelag"],
+            "ground-water": [20, "Vann ved bakken/smelting fra bakken"],
+            "water-layers": [22, "Opphopning av vann i/over lag i snødekket"],
+            "loose": [24, "Ubunden snø"]
+        }
+    },
+    "dsize": {
+        "ext_attr": ["destructive_size_ext_id", "destructive_size_ext_name"],
+        "values": {
+            '0': [0, "Ikke gitt"],
+            '1': [1, "1 - Små"],
+            '2': [2, "2 - Middels"],
+            '3': [3, "3 - Store"],
+            '4': [4, "4 - Svært store"],
+            '5': [5, "5 - Ekstremt store"]
+        }
+    },
+    "prob": {
+        "ext_attr": ["aval_probability_id", "aval_probability_name"],
+        "values": {
+            '0': [0, "Ikke gitt"],
+            '2': [2, "Lite sannsynlig"],
+            '3': [3, "Mulig"],
+            '5': [5, "Sannsynlig"],
+        }
+    },
+    "trig": {
+        "ext_attr": ["aval_trigger_simple_id", "aval_trigger_simple_name"],
+        "values": {
+            '0': [0, "Ikke gitt"],
+            '10': [10, "Stor tilleggsbelastning"],
+            '21': [21, "Liten tilleggsbelastning"],
+            '22': [22, "Naturlig utløst"]
+        }
+    },
+    "dist": {
+        "ext_attr": ["aval_distribution_id", "aval_distribution_name"],
+        "values": {
+            '0': [0, "Ikke gitt"],
+            '1': [1, "Få bratte heng"],
+            '2': [2, "Noen bratte heng"],
+            '3': [3, "Mange bratte heng"],
+            '4': [4, "De fleste bratte heng"]
+        }
+    },
+    "lev_fill": {
+        "ext_attr": ["exposed_height_fill"],
+        "values": {
+            '0': [0],
+            '1': [1],
+            '2': [2],
+            '3': [3],
+            '4': [4],
+        }
+    }
+}
+
+LABEL_PROBLEM_MULTI = {
+    "aspect": {
+        "ext_attr": "valid_expositions",
+    }
+}
+
+LABEL_PROBLEM_REAL = {
+    "lev_max": {
+        "ext_attr": "exposed_height_1",
+    },
+    "lev_min": {
+        "ext_attr": "exposed_height_2",
+    }
+}
+
 COMPETENCE = [0, 110, 115, 120, 130, 150]
 
 REGIONS = [3001, 3002, 3003, 3004, 3005, 3006, 3007, 3008, 3009, 3010, 3011, 3012, 3013, 3014, 3015, 3016, 3017, 3018,
@@ -430,6 +556,11 @@ class ForecastDataset:
                         except TypeError:
                             row['regobs'][attr_name] = 0
 
+            row['accuracy'] = map(
+                lambda x: {0: 0, 1: 1, 2: -1, 3: -1}[x['ForecastCorrectTID']],
+                current_regobs['Skredfarevurdering']
+            ) if 'Skredfarevurdering' in current_regobs else []
+
             # Check for consistency
             if weather['temp_min'] > weather['temp_max']:
                 continue
@@ -454,8 +585,10 @@ class ForecastDataset:
         """
         label_table = OrderedDict({})
         table = OrderedDict({})
+        row_weight = OrderedDict({})
         df = None
         df_label = None
+        df_weight = None
         days_w = {0: 1, 1: 1, 2: 1}.get(days, days - 1)
         days_v = {0: 1, 1: 2, 2: 2}.get(days, days)
         days_r = days + 1
@@ -492,33 +625,45 @@ class ForecastDataset:
                 for n in range(2, days_r):
                     row[(key, n)] = prev(n)['regobs'][key]
 
+            weight_sum = sum(entry['accuracy'])
+            if weight_sum < 0:
+                row_weight[(entry['date'].isoformat(), entry['region_id'])] = 1 / 2
+            elif weight_sum == 0:
+                row_weight[(entry['date'].isoformat(), entry['region_id'])] = 1
+            elif weight_sum > 0:
+                row_weight[(entry['date'].isoformat(), entry['region_id'])] = 2
+
             for datum, data in [(row, table), (entry['label'], label_table)]:
                 # Some restructuring to make DataFrame parse the dict correctly
                 for key in datum.keys():
                     if key not in data:
                         data[key] = OrderedDict({})
-                    data[key][entry_idx] = datum[key]
+                    data[key][(entry['date'].isoformat(), entry['region_id'])] = datum[key]
             # Build DataFrame iteratively to preserve system memory (floats in dicts are apparently expensive).
             if entry_idx % 1000 == 0:
                 df_new = pandas.DataFrame(table, dtype=np.float32).fillna(0)
                 df_label_new = pandas.DataFrame(label_table, dtype="U")
-                df = df_new if df is None else pandas.concat([df, df_new], ignore_index=True)
-                df_label = df_label_new if df is None else pandas.concat([df_label, df_label_new], ignore_index=True)
+                df_weight_new = pandas.Series(row_weight)
+                df = df_new if df is None else pandas.concat([df, df_new])
+                df_label = df_label_new if df is None else pandas.concat([df_label, df_label_new])
+                df_weight = df_weight_new if df is None else pandas.concat([df_weight, df_weight_new])
                 table = OrderedDict({})
                 label_table = OrderedDict({})
+                row_weight = OrderedDict({})
 
-        return LabeledData(df, df_label, days, self.regobs_types)
+        return LabeledData(df, df_label, df_weight, days, self.regobs_types)
 
 
 class LabeledData:
     is_normalized = False
     scaler = MinMaxScaler()
 
-    def __init__(self, data, label, days, regobs_types):
+    def __init__(self, data, label, row_weight, days, regobs_types):
         """Holds labels and features.
 
         :param data:            A DataFrame containing the features of the dataset.
         :param label:           DataFrame of labels.
+        :param row_weight:      Series containing row weights
         :param days:            How far back in time values should data be included.
                                 If 0, only weather data for the forecast day is evaluated.
                                 If 1, day 0 is used for weather, 1 for Varsom.
@@ -532,6 +677,7 @@ class LabeledData:
                                 e.g., `("Faretegn")`.
         """
         self.data = data
+        self.row_weight = row_weight
         self.label = label.sort_index(axis=1)
         self.label = self.label.replace(_NONE, 0)
         self.label = self.label.replace(np.nan, 0)
@@ -589,10 +735,12 @@ class LabeledData:
             training_data.data = training_data.data.iloc[train_index]
             training_data.label = training_data.label.iloc[train_index]
             training_data.pred = training_data.pred.iloc[train_index]
+            training_data.row_weight = training_data.row_weight.iloc[train_index]
             testing_data = self.copy()
             testing_data.data = testing_data.data.iloc[test_index]
             testing_data.label = testing_data.label.iloc[test_index]
             testing_data.pred = testing_data.pred.iloc[test_index]
+            testing_data.row_weight = testing_data.row_weight.iloc[test_index]
             array.append((training_data, testing_data))
         return array
 
@@ -627,8 +775,8 @@ class LabeledData:
             df = new_df if df is None else pandas.concat([df, new_df], sort=True)
 
         for subprob in dummies["label"]["REAL"].keys():
-            truth = dummies["label"]["REAL"][subprob].values.astype(np.float32)
-            pred = dummies["pred"]["REAL"][subprob].values.astype(np.float32)
+            truth = dummies["label"]["REAL"][subprob].values
+            pred = dummies["pred"]["REAL"][subprob].values
             try:
                 rmse = (np.sqrt(np.sum(np.square(pred - truth), axis=0)) / truth.shape[0])
             except:
@@ -729,15 +877,65 @@ class LabeledData:
             regobs = f"_regobs_{'_'.join([REG_ENG[obs_type] for obs_type in self.regobs_types])}"
         pathname_data = f"{se.local_storage}data_v{CSV_VERSION}_days_{self.days}{regobs}.csv"
         pathname_label = f"{se.local_storage}label_v{CSV_VERSION}_days_{self.days}{regobs}.csv"
+        pathname_weight = f"{se.local_storage}weight_v{CSV_VERSION}_days_{self.days}{regobs}.csv"
         ld = self.denormalize()
         ld.data.to_csv(pathname_data, sep=';')
         ld.label.to_csv(pathname_label, sep=';')
+        ld.row_weight.to_csv(pathname_weight, sep=';', header=False)
+
+    def to_aw(self):
+        """Convert predictions to AvalancheWarnings.
+
+        :return: AvalancheWarning[]
+        """
+        aws = []
+        for name, row in self.pred.iterrows():
+            aw = gf.AvalancheWarning()
+            aw.region_id = int(name[1])
+            aw.valid_from = dt.datetime.combine(dt.date.fromisoformat(name[0]), dt.datetime.min.time())
+            aw.valid_to = dt.datetime.combine(dt.date.fromisoformat(name[0]), dt.datetime.max.time())
+            aw.mountain_weather = gf.MountainWeather()
+            for int_attr, dict in LABEL_GLOBAL.items():
+                for idx, ext_attr in enumerate(dict['ext_attr']):
+                    ext_val = dict['values'][row['CLASS', '', int_attr]][idx]
+                    setattr(aw, ext_attr, ext_val)
+            for p_idx in range(1, int(row['CLASS', '', 'problem_amount']) + 1):
+                p_prefix = f"problem_{p_idx}"
+                p_name = row['CLASS', '', p_prefix]
+                if p_name == "":
+                    break
+                problem = gf.AvalancheWarningProblem()
+                problem.avalanche_problem_id = -p_idx + 4
+                for idx, ext_attr in enumerate(LABEL_PROBLEM_PRIMARY['ext_attr']):
+                    ext_val = LABEL_PROBLEM_PRIMARY['values'][row['CLASS', '', p_prefix]][idx]
+                    setattr(problem, ext_attr, ext_val)
+                for int_attr, dict in LABEL_PROBLEM.items():
+                    for idx, ext_attr in enumerate(dict['ext_attr']):
+                        ext_val = dict['values'][row['CLASS', p_name, int_attr]][idx]
+                        setattr(problem, ext_attr, ext_val)
+                for int_attr, dict in LABEL_PROBLEM_MULTI.items():
+                    ext_attr = dict['ext_attr']
+                    ext_val = row['MULTI', p_name, int_attr]
+                    setattr(problem, ext_attr, ext_val)
+                for int_attr, dict in LABEL_PROBLEM_REAL.items():
+                    ext_attr = dict['ext_attr']
+                    ext_val = row['REAL', p_name, int_attr]
+                    setattr(problem, ext_attr, ext_val)
+                aw.avalanche_problems.append(problem)
+            aws.append(aw)
+        return aws
 
     def copy(self):
         """Deep copy LabeledData.
         :return: copied LabeledData
         """
-        ld = LabeledData(self.data.copy(deep=True), self.label.copy(deep=True), self.days, copy.copy(self.regobs_types))
+        ld = LabeledData(
+            self.data.copy(deep=True),
+            self.label.copy(deep=True),
+            self.row_weight.copy(deep=True),
+            self.days,
+            copy.copy(self.regobs_types)
+        )
         ld.is_normalized = self.is_normalized
         ld.scaler = self.scaler
         ld.pred = self.pred.copy(deep=True)
@@ -756,14 +954,16 @@ class LabeledData:
             regobs = f"_regobs_{'_'.join([REG_ENG[obs_type] for obs_type in regobs_types])}"
         pathname_data = f"{se.local_storage}data_v{CSV_VERSION}_days_{days}{regobs}.csv"
         pathname_label = f"{se.local_storage}label_v{CSV_VERSION}_days_{days}{regobs}.csv"
+        pathname_weight = f"{se.local_storage}weight_v{CSV_VERSION}_days_{days}{regobs}.csv"
         try:
-            data = pandas.read_csv(pathname_data, sep=";", header=[0, 1], index_col=0, dtype=np.float32)
-            label = pandas.read_csv(pathname_label, sep=";", header=[0, 1, 2], index_col=0, low_memory=False, dtype="U")
+            data = pandas.read_csv(pathname_data, sep=";", header=[0, 1], index_col=[0, 1])
+            label = pandas.read_csv(pathname_label, sep=";", header=[0, 1, 2], index_col=[0, 1], low_memory=False, dtype="U")
+            row_weight = pandas.read_csv(pathname_weight, sep=";", header=None, index_col=[0, 1], low_memory=False)
             columns = [(col[0], re.sub(r'Unnamed:.*', _NONE, col[1]), col[2]) for col in label.columns.tolist()]
             label.columns = pandas.MultiIndex.from_tuples(columns)
         except FileNotFoundError:
             raise CsvMissingError()
-        return LabeledData(data, label, days, regobs_types)
+        return LabeledData(data, label, row_weight, days, regobs_types)
 
 
 def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
@@ -819,8 +1019,12 @@ def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
                     pickle.dump(response, handle, protocol=pickle.HIGHEST_PROTOCOL)
                 break
     else:
-        with open(file_name, 'rb') as handle:
-            response = pickle.load(handle)
+        try:
+            with open(file_name, 'rb') as handle:
+                response = pickle.load(handle)
+        except:
+            os.remove(file_name)
+            return _get_regobs_obs(regions, year, requested_types, max_file_age)
 
     for raw_obs in response:
         for reg in raw_obs["Registrations"]:
