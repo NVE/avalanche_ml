@@ -925,48 +925,6 @@ class LabeledData:
             aws.append(aw)
         return aws
 
-    def to_aw(self):
-        """Convert predictions to AvalancheWarnings.
-
-        :return: AvalancheWarning[]
-        """
-        aws = []
-        for name, row in self.pred.iterrows():
-            aw = gf.AvalancheWarning()
-            aw.region_id = int(name[1])
-            aw.valid_from = dt.datetime.combine(dt.date.fromisoformat(name[0]), dt.datetime.min.time())
-            aw.valid_to = dt.datetime.combine(dt.date.fromisoformat(name[0]), dt.datetime.max.time())
-            aw.mountain_weather = gf.MountainWeather()
-            for int_attr, dict in LABEL_GLOBAL.items():
-                for idx, ext_attr in enumerate(dict['ext_attr']):
-                    ext_val = dict['values'][row['CLASS', '', int_attr]][idx]
-                    setattr(aw, ext_attr, ext_val)
-            for p_idx in range(1, int(row['CLASS', '', 'problem_amount']) + 1):
-                p_prefix = f"problem_{p_idx}"
-                p_name = row['CLASS', '', p_prefix]
-                if p_name == "":
-                    break
-                problem = gf.AvalancheWarningProblem()
-                problem.avalanche_problem_id = -p_idx + 4
-                for idx, ext_attr in enumerate(LABEL_PROBLEM_PRIMARY['ext_attr']):
-                    ext_val = LABEL_PROBLEM_PRIMARY['values'][row['CLASS', '', p_prefix]][idx]
-                    setattr(problem, ext_attr, ext_val)
-                for int_attr, dict in LABEL_PROBLEM.items():
-                    for idx, ext_attr in enumerate(dict['ext_attr']):
-                        ext_val = dict['values'][row['CLASS', p_name, int_attr]][idx]
-                        setattr(problem, ext_attr, ext_val)
-                for int_attr, dict in LABEL_PROBLEM_MULTI.items():
-                    ext_attr = dict['ext_attr']
-                    ext_val = row['MULTI', p_name, int_attr]
-                    setattr(problem, ext_attr, ext_val)
-                for int_attr, dict in LABEL_PROBLEM_REAL.items():
-                    ext_attr = dict['ext_attr']
-                    ext_val = row['REAL', p_name, int_attr]
-                    setattr(problem, ext_attr, ext_val)
-                aw.avalanche_problems.append(problem)
-            aws.append(aw)
-        return aws
-
     def copy(self):
         """Deep copy LabeledData.
         :return: copied LabeledData
