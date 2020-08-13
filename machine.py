@@ -1,9 +1,15 @@
 from aggregatedata import PROBLEMS, _NONE
-import pickle
 import os
 import sys
 import numpy as np
 import pandas
+import dill
+
+old_dir = os.getcwd()
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, "./varsomdata")
+import setenvironment as se
+os.chdir(old_dir)
 
 old_dir = os.getcwd()
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -12,6 +18,8 @@ import setenvironment as se
 os.chdir(old_dir)
 
 __author__ = 'arwi'
+
+DILL_VERSION = '1'
 
 class BulletinMachine:
     def __init__(
@@ -249,15 +257,15 @@ class BulletinMachine:
 
 
     def dump(self, identifier):
-        file_name = f'{se.local_storage}model_{identifier}.pickle'
+        file_name = f'{se.local_storage}model_v{DILL_VERSION}_{identifier}.dill'
         with open(file_name, 'wb') as handle:
-            pickle.dump(self, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            dill.dump(self, handle)
 
     @staticmethod
     def load(identifier):
-        file_name = f'{se.local_storage}model_{identifier}.pickle'
+        file_name = f'{se.local_storage}model_v{DILL_VERSION}_{identifier}.dill'
         with open(file_name, 'rb') as handle:
-            return pickle.load(handle)
+            return dill.load(handle)
 
 
 class Error(Exception):
