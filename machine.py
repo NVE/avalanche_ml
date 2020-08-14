@@ -12,12 +12,6 @@ sys.path.insert(0, "./varsomdata")
 import setenvironment as se
 os.chdir(old_dir)
 
-old_dir = os.getcwd()
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, "./varsomdata")
-import setenvironment as se
-os.chdir(old_dir)
-
 __author__ = 'arwi'
 
 DILL_VERSION = '2'
