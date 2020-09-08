@@ -13,6 +13,7 @@ from collections import OrderedDict
 import numpy as np
 import pandas
 import requests
+from requests_futures.sessions import FuturesSession
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import KFold
 
@@ -31,7 +32,7 @@ __author__ = 'arwi'
 
 _pwl = re.compile("(DH|SH|FC)")
 
-CSV_VERSION = "19"
+CSV_VERSION = "21"
 
 _NONE = ""
 
@@ -93,6 +94,65 @@ EXPOSED_HEIGHTS = {
     4: "middle-black",
 }
 
+# Transformations from Varsom main level
+AVALANCHE_WARNING = {
+    "danger_level": ("danger_level", lambda x: x),
+    "emergency_warning": ("emergency_warning", lambda x: float(x == "Ikke gitt")),
+    "problem_amount": ("avalanche_problems", lambda x: len(x)),
+}
+
+# Same as AVALANCHE_WARNING, but destined for the label table
+AVALANCHE_WARNING_LABEL = {
+    ("CLASS", "danger_level"): ("danger_level", lambda x: x),
+    ("CLASS", "emergency_warning"): ("emergency_warning", lambda x: x),
+    ("CLASS", "problem_amount"): ("avalanche_problems", lambda x: len(x)),
+}
+
+# Transformations from Varsom problem level
+AVALANCHE_PROBLEM = {
+    "dsize": ("destructive_size_ext_id", lambda x: x),
+    "prob": ("aval_probability_id", lambda x: x),
+    "trig": ("aval_trigger_simple_id", lambda x: {10: 0, 21: 1, 22: 2}.get(x, 0)),
+    "dist": ("aval_distribution_id", lambda x: x),
+    "lev_max": ("exposed_height_1", lambda x: x),
+    "lev_min": ("exposed_height_2", lambda x: x),
+}
+for cause in CAUSES.values():
+    AVALANCHE_PROBLEM[f"cause_{cause}"] = ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == cause))
+for n in range(1, 5):
+    AVALANCHE_PROBLEM[f"lev_fill{n}"] = ("exposed_height_fill", lambda x: float(x == n))
+for n in range(0, 8):
+    AVALANCHE_PROBLEM[f"aspect_{DIRECTIONS[n]}"] = ("valid_expositions", lambda x: float(x[n]))
+
+# Same as AVALANCHE_PROBLEM, but destined for the label table
+AVALANCHE_PROBLEM_LABEL = {
+    ("CLASS", "cause"): ("aval_cause_id", lambda x: CAUSES.get(x, _NONE)),
+    ("CLASS", "dsize"): ("destructive_size_ext_id", lambda x: x),
+    ("CLASS", "prob"): ("aval_probability_id", lambda x: x),
+    ("CLASS", "trig"): ("aval_trigger_simple_id", lambda x: x),
+    ("CLASS", "dist"): ("aval_distribution_id", lambda x: x),
+    ("CLASS", "lev_fill"): ("exposed_height_fill", lambda x: x),
+    ("MULTI", "aspect"): ("valid_expositions", lambda x: x.zfill(8)),
+    ("REAL", "lev_max"): ("exposed_height_1", lambda x: x),
+    ("REAL", "lev_min"): ("exposed_height_2", lambda x: x),
+}
+
+# Transformations from Mountain Weather API
+WEATHER = {
+    "precip_most_exposed": ("Precipitation_MostExposed_Median", lambda x: x),
+    "precip": ("Precipitation_overall_ThirdQuartile", lambda x: x),
+    "wind_speed": ("WindClassification", lambda x: WIND_SPEEDS.get(x)),
+    "wind_percentage": ("WindPercentage", lambda x: x),
+    "temp_min": ("MinTemperature", lambda x: x),
+    "temp_max": ("MaxTemperature", lambda x: x),
+    "temp_lev": ("TemperatureElevation", lambda x: x),
+    "temp_freeze_lev": ("FreezingLevelAltitude", lambda x: x),
+}
+for h in range(0, 24):
+    WEATHER[f"temp_fl_start_{h}"] = ("FreezingLevelTime", lambda x: x == h)
+for wind_dir in DIRECTIONS:
+    WEATHER[f"wind_dir_{wind_dir}"] = ("WindDirection", lambda x: x == wind_dir)
+
 REG_ENG = {
     "Faretegn": "dangersign",
     "Tester": "tests",
@@ -104,6 +164,7 @@ REG_ENG = {
     "Snøprofil": "snowprofile",
 }
 
+# Transformations for RegObs Classes
 REGOBS_CLASSES = {
     "Faretegn": {
         "DangerSignTID": {
@@ -191,6 +252,7 @@ REGOBS_CLASSES = {
     "Snøprofil": {}
 }
 
+# Transformations for RegObs scalars
 REGOBS_SCALARS = {
     "Faretegn": {},
     "Tester": {
@@ -432,142 +494,20 @@ class ForecastDataset:
         :param seasons: Tuple/list of string representations of avalanche seasons to fetch.
         """
         self.regobs_types = regobs_types
-        self.tree = {}
+        self.weather = {}
+        self.regobs = {}
+        self.varsom = {}
+        self.labels = {}
 
-        aw = []
-        raw_regobs = {}
         for season in seasons:
-            aw += gvp.get_all_forecasts(year=season)
             regions = gm.get_forecast_regions(year=season, get_b_regions=True)
-            raw_regobs = {**raw_regobs, **_get_regobs_obs(regions, season, regobs_types)}
+            varsom, labels = _get_varsom_obs(year=season)
+            self.varsom = {**self.varsom, **varsom}
+            self.labels = {**self.labels, **labels}
+            self.regobs = {**self.regobs, **_get_regobs_obs(regions, season, regobs_types)}
+            self.weather = {**self.weather, **_get_weather_obs(season)}
 
-        for forecast in aw:
-
-            row = {
-                # Metadata
-                'region_id': forecast.region_id,
-                'region_name': forecast.region_name,
-                'region_type': forecast.region_type_name,
-                'date': forecast.date_valid,
-
-                'danger_level': forecast.danger_level,
-                'emergency_warning': float(forecast.emergency_warning == 'Ikke gitt')
-            }
-
-            label = OrderedDict({})
-            label[('CLASS', _NONE, 'danger_level')] = forecast.danger_level
-            label[('CLASS', _NONE, 'emergency_warning')] = forecast.emergency_warning
-
-            # Weather data
-            weather = {
-                'precip_most_exposed': forecast.mountain_weather.precip_most_exposed,
-                'precip': forecast.mountain_weather.precip_region,
-                'wind_speed': WIND_SPEEDS.get(forecast.mountain_weather.wind_speed, 0),
-                'wind_change_speed': WIND_SPEEDS.get(forecast.mountain_weather.change_wind_speed, 0),
-                'temp_min': forecast.mountain_weather.temperature_min,
-                'temp_max': forecast.mountain_weather.temperature_max,
-                'temp_lev': forecast.mountain_weather.temperature_elevation,
-                'temp_freeze_lev': forecast.mountain_weather.freezing_level,
-            }
-
-            # We use multiple loops to get associated values near each other in e.g. .csv-files.
-            for wind_dir in DIRECTIONS:
-                weather[f"wind_dir_{wind_dir}"] = float(forecast.mountain_weather.wind_direction == wind_dir)
-            for wind_dir in DIRECTIONS:
-                weather[f"wind_chg_dir_{wind_dir}"] = float(forecast.mountain_weather.change_wind_direction == wind_dir)
-            hours = [0, 6, 12, 18]
-            for h in hours:
-                weather[f"wind_chg_start_{h}"] = float(forecast.mountain_weather.change_hour_of_day_start == h)
-            for h in hours:
-                weather[f"temp_fl_start_{h}"] = float(forecast.mountain_weather.change_hour_of_day_start == h)
-            row['weather'] = weather
-
-            # Problem data
-            prb = {}
-            problem_types = [PROBLEMS.get(p.avalanche_problem_type_id, _NONE) for p in forecast.avalanche_problems]
-            problems = {}
-            prb['problem_amount'] = len(forecast.avalanche_problems)
-            label[('CLASS', _NONE, 'problem_amount')] = prb['problem_amount']
-            for i in range(1, 4):
-                label[('CLASS', _NONE, f"problem_{i}")] = _NONE
-            for problem in PROBLEMS.values():
-                if problem in problem_types:
-                    index = problem_types.index(problem)
-                    problems[problem] = forecast.avalanche_problems[index]
-                    prb[f"problem_{problem}"] = -(problems[problem].avalanche_problem_id - 4)
-                    label[('CLASS', _NONE, f"problem_{index + 1}")] = problem
-                else:
-                    problems[problem] = gf.AvalancheWarningProblem()
-                    prb[f"problem_{problem}"] = 0
-            for problem in PROBLEMS.values():
-                p_data = problems[problem]
-                forecast_cause = CAUSES.get(p_data.aval_cause_id, _NONE)
-                for cause in CAUSES.values():
-                    prb[f"problem_{problem}_cause_{cause}"] = float(forecast_cause == cause)
-                prb[f"problem_{problem}_dsize"] = p_data.destructive_size_ext_id
-                prb[f"problem_{problem}_prob"] = p_data.aval_probability_id
-                prb[f"problem_{problem}_trig"] = {10: 0, 21: 1, 22: 2}.get(p_data.aval_trigger_simple_id, 0)
-                prb[f"problem_{problem}_dist"] = p_data.aval_distribution_id
-                prb[f"problem_{problem}_lev_max"] = p_data.exposed_height_1
-                prb[f"problem_{problem}_lev_min"] = p_data.exposed_height_2
-
-                label[('CLASS', problem, "cause")] = forecast_cause
-                label[('CLASS', problem, "dsize")] = p_data.destructive_size_ext_id
-                label[('CLASS', problem, "prob")] = p_data.aval_probability_id
-                label[('CLASS', problem, "trig")] = p_data.aval_trigger_simple_id
-                label[('CLASS', problem, "dist")] = p_data.aval_distribution_id
-                label[('CLASS', problem, "lev_fill")] = p_data.exposed_height_fill
-
-                for n in range(1, 5):
-                    prb[f"problem_{problem}_lev_fill{n}"] = float(p_data.exposed_height_fill == n)
-                for n in range(0, 8):
-                    aspect_attr_name = f"problem_{problem}_aspect_{DIRECTIONS[n]}"
-                    prb[aspect_attr_name] = float(p_data.valid_expositions[n])
-                label[('MULTI', problem, "aspect")] = p_data.valid_expositions.zfill(8)
-                label[('REAL', problem, "lev_max")] = p_data.exposed_height_1
-                label[('REAL', problem, "lev_min")] = p_data.exposed_height_2
-
-                # Check for consistency
-                if prb[f"problem_{problem}_lev_min"] > prb[f"problem_{problem}_lev_max"]:
-                    continue
-
-            row['problems'] = prb
-            row['label'] = label
-
-            # RegObs data
-            row['regobs'] = {}
-            current_regobs = raw_regobs.get((forecast.region_id, forecast.date_valid), {})
-            # Use 5 most competent observations, and list both categories as well as scalars
-            for obs_idx in range(0, 5):
-                # One type of observation (test, danger signs etc.) at a time
-                for regobs_type in self.regobs_types:
-                    obses = current_regobs[regobs_type] if regobs_type in current_regobs else []
-                    # Go through each requested class attribute from the specified observation type
-                    for attr, cat in REGOBS_CLASSES[regobs_type].items():
-                        # We handle categories using 1-hot, so we step through each category
-                        for cat_name in cat.values():
-                            attr_name = f"regobs_{REG_ENG[regobs_type]}_{_camel_to_snake(attr)}_{cat_name}_{obs_idx}"
-                            row['regobs'][attr_name] = obses[obs_idx][cat_name] if len(obses) > obs_idx else 0
-                    # Go through all requested scalars
-                    for attr, (regobs_attr, conv) in REGOBS_SCALARS[regobs_type].items():
-                        attr_name = f"regobs_{REG_ENG[regobs_type]}_{_camel_to_snake(attr)}_{obs_idx}"
-                        try:
-                            row['regobs'][attr_name] = conv(obses[obs_idx][regobs_attr]) if len(obses) > obs_idx else 0
-                        except TypeError:
-                            row['regobs'][attr_name] = 0
-
-            row['accuracy'] = map(
-                lambda x: {0: 0, 1: 1, 2: -1, 3: -1}[x['ForecastCorrectTID']],
-                current_regobs['Skredfarevurdering']
-            ) if 'Skredfarevurdering' in current_regobs else []
-
-            # Check for consistency
-            if weather['temp_min'] > weather['temp_max']:
-                continue
-
-            self.tree[(forecast.region_id, forecast.date_valid)] = row
-
-    def label(self, days):
+    def label(self, days, use_varsom=True):
         """Creates a LabeledData containing relevant label and features formatted either in a flat structure or as
         a time series.
 
@@ -581,75 +521,85 @@ class ForecastDataset:
                                 the same number of data points, if we want to use some time series
                                 frameworks that are picky about such things.
 
+        :param use_varsom:      Whether to include previous avalanche bulletins into the indata.
+
         :return:                LabeledData
         """
-        label_table = OrderedDict({})
-        table = OrderedDict({})
-        row_weight = OrderedDict({})
+        table = {}
+        row_weight = {}
         df = None
-        df_label = None
         df_weight = None
+        df_label = pandas.DataFrame(self.labels, dtype="U")
         days_w = {0: 1, 1: 1, 2: 1}.get(days, days - 1)
         days_v = {0: 1, 1: 2, 2: 2}.get(days, days)
         days_r = days + 1
 
-        for entry_idx, entry in enumerate(self.tree.values()):
-            def prev(day_dist):
-                return self.tree[(entry['region_id'], entry['date'] - dt.timedelta(days=day_dist))]
-            # Skip B-regions for now.
-            if entry['region_type'] == 'B':
-                continue
+        for monotonic_idx, entry_idx in enumerate(df_label.index):
+            date, region_id = dt.date.fromisoformat(entry_idx[0]), entry_idx[1]
+
+            def prev_key(day_dist):
+                return (date - dt.timedelta(days=day_dist)).isoformat(), region_id
+
+            # Just check that we can use this entry.
             try:
-                for n in range(0, days_r):
-                    # Just check that we can use this day.
-                    prev(n)
+                if use_varsom:
+                    for n in range(1, days_v):
+                        _ = self.varsom['danger_level'][prev_key(n)]
+                for n in range(0, days_w):
+                    _ = self.weather['Precipitation_overall_ThirdQuartile'][prev_key(n)]
+                # We don't check for RegObs as it is more of the good to have type of data
             except KeyError:
                 continue
 
             row = OrderedDict({})
             for region in REGIONS:
-                row[(f"region_id_{region}", 0)] = float(region == entry["region_id"])
+                row[(f"region_id_{region}", 0)] = float(region == "region_id")
 
-            # It would obviously be better code-wise to flip the loops, but we need this insertion order.
-            for key in entry['weather'].keys():
+            if use_varsom:
+                for column in self.varsom.keys():
+                    for n in range(1, days_v):
+                        row[(column, n)] = self.varsom[column][prev_key(n)]
+            for key, (orig_key, mapping) in WEATHER.items():
                 for n in range(0, days_w):
-                    row[(key, n)] = prev(n)['weather'][key]
-            for n in range(1, days_v):
-                row[("danger_level", n)] = prev(n)['danger_level']
-            for n in range(1, days_v):
-                row[("emergency_warning", n)] = prev(n)['emergency_warning']
-            for key in entry['problems'].keys():
-                for n in range(1, days_v):
-                    row[(key, n)] = prev(n)['problems'][key]
-            for key in entry['regobs'].keys():
+                    row[(key, n)] = mapping(self.weather[orig_key][prev_key(n)])
+            for column in self.regobs.keys():
                 for n in range(2, days_r):
-                    row[(key, n)] = prev(n)['regobs'][key]
+                    try:
+                        row[(column, n)] = self.regobs[column][prev_key(n)]
+                    except KeyError:
+                        row[(column, n)] = 0
+            try:
+                weight_sum = self.regobs['accuracy'][prev_key(0)]
+                if weight_sum < 0:
+                    row_weight[entry_idx] = 1 / 2
+                elif weight_sum == 0:
+                    row_weight[entry_idx] = 1
+                elif weight_sum > 0:
+                    row_weight[entry_idx] = 2
+            except KeyError:
+                row_weight[entry_idx] = 1
 
-            weight_sum = sum(entry['accuracy'])
-            if weight_sum < 0:
-                row_weight[(entry['date'].isoformat(), entry['region_id'])] = 1 / 2
-            elif weight_sum == 0:
-                row_weight[(entry['date'].isoformat(), entry['region_id'])] = 1
-            elif weight_sum > 0:
-                row_weight[(entry['date'].isoformat(), entry['region_id'])] = 2
-
-            for datum, data in [(row, table), (entry['label'], label_table)]:
-                # Some restructuring to make DataFrame parse the dict correctly
-                for key in datum.keys():
-                    if key not in data:
-                        data[key] = OrderedDict({})
-                    data[key][(entry['date'].isoformat(), entry['region_id'])] = datum[key]
+            # Some restructuring to make DataFrame parse the dict correctly
+            for key in row.keys():
+                if key not in table:
+                    table[key] = {}
+                table[key][entry_idx] = row[key]
             # Build DataFrame iteratively to preserve system memory (floats in dicts are apparently expensive).
-            if entry_idx % 1000 == 0:
+            if monotonic_idx % 1000 == 0 or monotonic_idx == len(df_label.index) - 1:
                 df_new = pandas.DataFrame(table, dtype=np.float32).fillna(0)
-                df_label_new = pandas.DataFrame(label_table, dtype="U")
                 df_weight_new = pandas.Series(row_weight)
                 df = df_new if df is None else pandas.concat([df, df_new])
-                df_label = df_label_new if df is None else pandas.concat([df_label, df_label_new])
                 df_weight = df_weight_new if df is None else pandas.concat([df_weight, df_weight_new])
-                table = OrderedDict({})
-                label_table = OrderedDict({})
-                row_weight = OrderedDict({})
+                table = {}
+                row_weight = {}
+
+        df_label = df_label.loc[df.index]
+
+        df_label.sort_index(axis=0, inplace=True)
+        df_label.sort_index(axis=1, inplace=True)
+        df.sort_index(axis=0, inplace=True)
+        df.sort_index(axis=1, inplace=True)
+        df_weight.sort_index(axis=0, inplace=True)
 
         return LabeledData(df, df_label, df_weight, days, self.regobs_types)
 
@@ -678,7 +628,7 @@ class LabeledData:
         """
         self.data = data
         self.row_weight = row_weight
-        self.label = label.sort_index(axis=1)
+        self.label = label
         self.label = self.label.replace(_NONE, 0)
         self.label = self.label.replace(np.nan, 0)
         self.label['CLASS', _NONE] = self.label['CLASS', _NONE].replace(0, _NONE).values
@@ -690,7 +640,7 @@ class LabeledData:
         self.pred['MULTI'] = "0"
         self.days = days
         self.regobs_types = regobs_types
-        self.scaler.fit(self.data)
+        self.scaler.fit(self.data.values)
 
     def normalize(self):
         """Normalize the data feature-wise using MinMax.
@@ -965,6 +915,119 @@ class LabeledData:
             raise CsvMissingError()
         return LabeledData(data, label, row_weight, days, regobs_types)
 
+def _get_varsom_obs(year, max_file_age=23):
+    aw = gvp.get_all_forecasts(year=year)
+    forecasts = {}
+    labels = {}
+    for forecast in aw:
+        # Skip B-regions for now.
+        if forecast.region_type_name == 'B':
+            continue
+
+        row = {}
+        table_row = {}
+
+        for key, (orig_key, mapper) in AVALANCHE_WARNING.items():
+            row[key] = mapper(getattr(forecast, orig_key))
+        for (typ, attribute), (orig_key, mapper) in AVALANCHE_WARNING_LABEL.items():
+            table_row[(typ, _NONE, attribute)] = mapper(getattr(forecast, orig_key))
+
+        problem_types = [PROBLEMS.get(p.avalanche_problem_type_id, _NONE) for p in forecast.avalanche_problems]
+        problems = {}
+        for i in range(1, 4):
+            table_row[('CLASS', _NONE, f"problem_{i}")] = _NONE
+        for problem in PROBLEMS.values():
+            if problem in problem_types:
+                index = problem_types.index(problem)
+                problems[problem] = forecast.avalanche_problems[index]
+                row[f"problem_{problem}"] = -(problems[problem].avalanche_problem_id - 4)
+                table_row[('CLASS', _NONE, f"problem_{index + 1}")] = problem
+            else:
+                problems[problem] = gf.AvalancheWarningProblem()
+                row[f"problem_{problem}"] = 0
+
+        for problem in PROBLEMS.values():
+            p_data = problems[problem]
+            for key, (orig_key, mapper) in AVALANCHE_PROBLEM.items():
+                row[f"problem_{problem}_{key}"] = mapper(getattr(p_data, orig_key))
+            for (type, attribute), (orig_key, mapper) in AVALANCHE_PROBLEM_LABEL.items():
+                table_row[(type, problem, attribute)] = mapper(getattr(p_data, orig_key))
+
+        for key, value in row.items():
+            if key not in forecasts:
+                forecasts[key] = {}
+            forecasts[key][(forecast.date_valid.isoformat(), forecast.region_id)] = value
+        for key, value in table_row.items():
+            if key not in labels:
+                labels[key] = {}
+            labels[key][(forecast.date_valid.isoformat(), forecast.region_id)] = value
+    return forecasts, labels
+
+def _get_weather_obs(year, max_file_age=23):
+    file_name = f'{se.local_storage}weather_v{CSV_VERSION}_{year}.pickle'
+    file_date_limit = dt.datetime.now() - dt.timedelta(hours=max_file_age)
+    current_season = gm.get_season_from_date(dt.date.today() - dt.timedelta(30))
+    get_new = True
+
+    try:
+        # Don't fetch new data if old is cached. If older season file doesn't exists we get out via an exception.
+        if dt.datetime.fromtimestamp(os.path.getmtime(file_name)) > file_date_limit or year != current_season:
+            get_new = False
+    except FileNotFoundError:
+        pass
+
+    date, to_date = gm.get_dates_from_season(year)
+
+    if get_new:
+        session = FuturesSession(max_workers=300)
+        date = date.replace(day=1)
+        futures = []
+        weather = {}
+        while date < to_date:
+            if date.month in [7, 8, 9, 10]:
+                date = date.replace(month=date.month+1)
+                date = date.replace(day=1)
+                continue
+            url = f'http://h-web03.nve.no/APSapi/TimeSeriesReader.svc/MountainWeather/-/{date.isoformat()}/no/true'
+            futures.append((date, session.get(url)))
+            date += dt.timedelta(days=1)
+
+
+        for date, future in futures:
+            response = future.result()
+            retries = 0
+            while response.status_code != requests.codes.ok and retries < 10:
+                print(f"Failed to fetch weather for {date.isoformat()}, retrying", file=sys.stderr)
+                time.sleep(1)
+                retries += 1
+                url = f'http://h-web03.nve.no/APSapi/TimeSeriesReader.svc/MountainWeather/-/{date.isoformat()}/no/true'
+                response = requests.get(url)
+
+            json = response.json()
+            for obs in json:
+                region = int(float(obs['RegionId']))
+                if region not in REGIONS:
+                    continue
+                if obs['Attribute'] not in weather:
+                    weather[obs['Attribute']] = {}
+                region = int(float(obs['RegionId']))
+                try:
+                    weather[obs['Attribute']][(date.isoformat(), region)] = float(obs['Value'])
+                except ValueError:
+                    weather[obs['Attribute']][(date.isoformat(), region)] = obs['Value']
+
+        with open(file_name, 'wb') as handle:
+                pickle.dump(weather, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    else:
+        try:
+            with open(file_name, 'rb') as handle:
+                weather = pickle.load(handle)
+        except:
+            os.remove(file_name)
+            return _get_weather_obs(year, max_file_age)
+
+    return weather
+
 
 def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
     observations = {}
@@ -972,7 +1035,7 @@ def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
     if len(requested_types) == 0:
         return observations
 
-    file_name = f'{se.local_storage}regobs_{year}.pickle'
+    file_name = f'{se.local_storage}regobs_v{CSV_VERSION}_{year}.pickle'
     file_date_limit = dt.datetime.now() - dt.timedelta(hours=max_file_age)
     current_season = gm.get_season_from_date(dt.date.today() - dt.timedelta(30))
     number_of_records = 50
@@ -1003,68 +1066,113 @@ def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
         "Offset": 0
     }
 
-    response = []
+    results = []
     if get_new:
-        while True:
-            try:
-                raw_obses = requests.post(url=url, json=query).json()
-            except requests.exceptions.ConnectionError:
-                time.sleep(1)
-                continue
-            response = response + raw_obses["Results"]
+        session = FuturesSession(max_workers=140)
+        futures = []
 
+        first = requests.post(url=url, json=query, verify=False).json()
+        results = results + first["Results"]
+        total_matches = first['TotalMatches']
+        searched = number_of_records
+        while searched < total_matches:
             query["Offset"] += number_of_records
-            if raw_obses["ResultsInPage"] < number_of_records:
-                with open(file_name, 'wb') as handle:
-                    pickle.dump(response, handle, protocol=pickle.HIGHEST_PROTOCOL)
-                break
+            query_copy = query.copy()
+            futures.append((query_copy, query["Offset"], session.post(url=url, json=query_copy, verify=False)))
+            searched += number_of_records
+
+        for query, offset, future in futures:
+            response = future.result()
+            retries = 0
+            while response.status_code != requests.codes.ok and retries < 10:
+                print(f"Failed to fetch regobs, offset {offset}, retrying", file=sys.stderr)
+                time.sleep(1)
+                retries += 1
+                response = requests.get(url=url, json=query, verify=False)
+            raw_obses = response.json()
+            results = results + raw_obses["Results"]
+
+        for raw_obs in results:
+            for reg in raw_obs["Registrations"]:
+                obs_type = reg["RegistrationName"]
+                if obs_type not in requested_types:
+                    continue
+                # Ignore snow profiles of the old format
+                if obs_type == "Snøprofil" and "StratProfile" not in reg["FullObject"]:
+                    continue
+
+                obs = {
+                    "competence": raw_obs["CompetenceLevelTid"]
+                }
+                try:
+                    for attr, categories in REGOBS_CLASSES[obs_type].items():
+                        value = reg["FullObject"][attr]
+                        for cat_id, cat_name in categories.items():
+                            obs[cat_name] = 1 if cat_id == value else 0
+                except KeyError:
+                    pass
+                try:
+                    for regobs_attr, conv in REGOBS_SCALARS[obs_type].values():
+                        obs[regobs_attr] = reg["FullObject"][regobs_attr]
+                except KeyError:
+                    pass
+
+                date = dt.datetime.fromisoformat(raw_obs["DtObsTime"]).date()
+                key = (date.isoformat(), raw_obs["ForecastRegionTid"])
+                if key not in observations:
+                    observations[key] = {}
+                if obs_type not in observations[key]:
+                    observations[key][obs_type] = []
+                observations[key][obs_type].append(obs)
+
+        # We want the most competent observations first
+        for date_region in observations.values():
+            for reg_type in date_region.values():
+                reg_type.sort(key=lambda x: x['competence'], reverse=True)
+
+        df_dict = {}
+        for key, observation in observations.items():
+            # Use 5 most competent observations, and list both categories as well as scalars
+            for obs_idx in range(0, 5):
+                # One type of observation (test, danger signs etc.) at a time
+                for regobs_type in requested_types:
+                    obses = observation[regobs_type] if regobs_type in observation else []
+                    # Go through each requested class attribute from the specified observation type
+                    for attr, cat in REGOBS_CLASSES[regobs_type].items():
+                        # We handle categories using 1-hot, so we step through each category
+                        for cat_name in cat.values():
+                            attr_name = f"regobs_{REG_ENG[regobs_type]}_{_camel_to_snake(attr)}_{cat_name}_{obs_idx}"
+                            if attr_name not in df_dict:
+                                df_dict[attr_name] = {}
+                            df_dict[attr_name][key] = obses[obs_idx][cat_name] if len(obses) > obs_idx else 0
+                    # Go through all requested scalars
+                    for attr, (regobs_attr, conv) in REGOBS_SCALARS[regobs_type].items():
+                        attr_name = f"regobs_{REG_ENG[regobs_type]}_{_camel_to_snake(attr)}_{obs_idx}"
+                        if attr_name not in df_dict:
+                            df_dict[attr_name] = {}
+                        try:
+                            df_dict[attr_name][key] = conv(obses[obs_idx][regobs_attr]) if len(obses) > obs_idx else 0
+                        except TypeError:
+                            df_dict[attr_name][key] = 0
+
+            if "accuracy" not in df_dict:
+                df_dict["accuracy"] = {}
+            df_dict['accuracy'][key] = sum(map(
+                lambda x: {0: 0, 1: 1, 2: -1, 3: -1}[x['ForecastCorrectTID']],
+                observation['Skredfarevurdering']
+            )) if 'Skredfarevurdering' in observation else 0
+
+        with open(file_name, 'wb') as handle:
+            pickle.dump(df_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
     else:
         try:
             with open(file_name, 'rb') as handle:
-                response = pickle.load(handle)
+                df_dict = pickle.load(handle)
         except:
             os.remove(file_name)
             return _get_regobs_obs(regions, year, requested_types, max_file_age)
 
-    for raw_obs in response:
-        for reg in raw_obs["Registrations"]:
-            obs_type = reg["RegistrationName"]
-            if obs_type not in requested_types:
-                continue
-            # Ignore snow profiles of the old format
-            if obs_type == "Snøprofil" and "StratProfile" not in reg["FullObject"]:
-                continue
-
-            obs = {
-                "competence": raw_obs["CompetenceLevelTid"]
-            }
-            try:
-                for attr, categories in REGOBS_CLASSES[obs_type].items():
-                    value = reg["FullObject"][attr]
-                    for cat_id, cat_name in categories.items():
-                        obs[cat_name] = 1 if cat_id == value else 0
-            except KeyError:
-                pass
-            try:
-                for regobs_attr, conv in REGOBS_SCALARS[obs_type].values():
-                    obs[regobs_attr] = reg["FullObject"][regobs_attr]
-            except KeyError:
-                pass
-
-            date = dt.datetime.fromisoformat(raw_obs["DtObsTime"]).date()
-            key = (raw_obs["ForecastRegionTid"], date)
-            if key not in observations:
-                observations[key] = {}
-            if obs_type not in observations[key]:
-                observations[key][obs_type] = []
-            observations[key][obs_type].append(obs)
-
-    # We want the most competent observations first
-    for date_region in observations.values():
-        for reg_type in date_region.values():
-            reg_type.sort(key=lambda x: x['competence'], reverse=True)
-
-    return observations
+    return df_dict
 
 
 _camel_re_1 = re.compile('(.)([A-Z][a-z]+)')
