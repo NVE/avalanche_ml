@@ -32,7 +32,7 @@ __author__ = 'arwi'
 
 _pwl = re.compile("(DH|SH|FC)")
 
-CSV_VERSION = "21"
+CSV_VERSION = "23"
 
 _NONE = ""
 
@@ -502,12 +502,12 @@ class ForecastDataset:
         for season in seasons:
             regions = gm.get_forecast_regions(year=season, get_b_regions=True)
             varsom, labels = _get_varsom_obs(year=season)
-            self.varsom = {**self.varsom, **varsom}
-            self.labels = {**self.labels, **labels}
-            self.regobs = {**self.regobs, **_get_regobs_obs(regions, season, regobs_types)}
-            self.weather = {**self.weather, **_get_weather_obs(season)}
+            self.varsom = _merge(self.varsom, varsom)
+            self.labels = _merge(self.labels, labels)
+            self.regobs = _merge(self.regobs, _get_regobs_obs(regions, season, regobs_types))
+            self.weather = _merge(self.weather, _get_weather_obs(season))
 
-    def label(self, days, use_varsom=True):
+    def label(self, days, with_varsom=True):
         """Creates a LabeledData containing relevant label and features formatted either in a flat structure or as
         a time series.
 
@@ -521,7 +521,7 @@ class ForecastDataset:
                                 the same number of data points, if we want to use some time series
                                 frameworks that are picky about such things.
 
-        :param use_varsom:      Whether to include previous avalanche bulletins into the indata.
+        :param with_varsom:      Whether to include previous avalanche bulletins into the indata.
 
         :return:                LabeledData
         """
@@ -533,6 +533,8 @@ class ForecastDataset:
         days_w = {0: 1, 1: 1, 2: 1}.get(days, days - 1)
         days_v = {0: 1, 1: 2, 2: 2}.get(days, days)
         days_r = days + 1
+        varsom_index = pandas.DataFrame(self.varsom).index
+        weather_index = pandas.DataFrame(self.weather).index
 
         for monotonic_idx, entry_idx in enumerate(df_label.index):
             date, region_id = dt.date.fromisoformat(entry_idx[0]), entry_idx[1]
@@ -542,11 +544,13 @@ class ForecastDataset:
 
             # Just check that we can use this entry.
             try:
-                if use_varsom:
+                if with_varsom:
                     for n in range(1, days_v):
-                        _ = self.varsom['danger_level'][prev_key(n)]
+                        if prev_key(n) not in varsom_index:
+                            raise KeyError
                 for n in range(0, days_w):
-                    _ = self.weather['Precipitation_overall_ThirdQuartile'][prev_key(n)]
+                    if prev_key(n) not in weather_index:
+                        raise KeyError
                 # We don't check for RegObs as it is more of the good to have type of data
             except KeyError:
                 continue
@@ -555,13 +559,16 @@ class ForecastDataset:
             for region in REGIONS:
                 row[(f"region_id_{region}", 0)] = float(region == "region_id")
 
-            if use_varsom:
+            if with_varsom:
                 for column in self.varsom.keys():
                     for n in range(1, days_v):
                         row[(column, n)] = self.varsom[column][prev_key(n)]
             for key, (orig_key, mapping) in WEATHER.items():
                 for n in range(0, days_w):
-                    row[(key, n)] = mapping(self.weather[orig_key][prev_key(n)])
+                    try:
+                        row[(key, n)] = mapping(self.weather[orig_key][prev_key(n)])
+                    except KeyError:
+                        row[(key, n)] = 0
             for column in self.regobs.keys():
                 for n in range(2, days_r):
                     try:
@@ -585,7 +592,8 @@ class ForecastDataset:
                     table[key] = {}
                 table[key][entry_idx] = row[key]
             # Build DataFrame iteratively to preserve system memory (floats in dicts are apparently expensive).
-            if monotonic_idx % 1000 == 0 or monotonic_idx == len(df_label.index) - 1:
+            if (monotonic_idx > 0 and monotonic_idx % 1000 == 0) or monotonic_idx == len(df_label.index) - 1:
+                print(monotonic_idx)
                 df_new = pandas.DataFrame(table, dtype=np.float32).fillna(0)
                 df_weight_new = pandas.Series(row_weight)
                 df = df_new if df is None else pandas.concat([df, df_new])
@@ -601,14 +609,14 @@ class ForecastDataset:
         df.sort_index(axis=1, inplace=True)
         df_weight.sort_index(axis=0, inplace=True)
 
-        return LabeledData(df, df_label, df_weight, days, self.regobs_types)
+        return LabeledData(df, df_label, df_weight, days, self.regobs_types, with_varsom)
 
 
 class LabeledData:
     is_normalized = False
     scaler = MinMaxScaler()
 
-    def __init__(self, data, label, row_weight, days, regobs_types):
+    def __init__(self, data, label, row_weight, days, regobs_types, with_varsom):
         """Holds labels and features.
 
         :param data:            A DataFrame containing the features of the dataset.
@@ -625,6 +633,7 @@ class LabeledData:
                                 frameworks that are picky about such things.
         :param regobs_types:    A tuple/list of strings of types of observations to fetch from RegObs.,
                                 e.g., `("Faretegn")`.
+        :param with_varsom:      Whether to include previous avalanche bulletins into the indata.
         """
         self.data = data
         self.row_weight = row_weight
@@ -639,6 +648,7 @@ class LabeledData:
         self.pred['CLASS', _NONE] = _NONE
         self.pred['MULTI'] = "0"
         self.days = days
+        self.with_varsom = with_varsom
         self.regobs_types = regobs_types
         self.scaler.fit(self.data.values)
 
@@ -825,9 +835,10 @@ class LabeledData:
         regobs = ""
         if len(self.regobs_types) and self.days >= 2:
             regobs = f"_regobs_{'_'.join([REG_ENG[obs_type] for obs_type in self.regobs_types])}"
-        pathname_data = f"{se.local_storage}data_v{CSV_VERSION}_days_{self.days}{regobs}.csv"
-        pathname_label = f"{se.local_storage}label_v{CSV_VERSION}_days_{self.days}{regobs}.csv"
-        pathname_weight = f"{se.local_storage}weight_v{CSV_VERSION}_days_{self.days}{regobs}.csv"
+        varsom = "" if self.with_varsom else "_novarsom"
+        pathname_data = f"{se.local_storage}data_v{CSV_VERSION}_days_{self.days}{regobs}{varsom}.csv"
+        pathname_label = f"{se.local_storage}label_v{CSV_VERSION}_days_{self.days}{regobs}{varsom}.csv"
+        pathname_weight = f"{se.local_storage}weight_v{CSV_VERSION}_days_{self.days}{regobs}{varsom}.csv"
         ld = self.denormalize()
         ld.data.to_csv(pathname_data, sep=';')
         ld.label.to_csv(pathname_label, sep=';')
@@ -884,7 +895,8 @@ class LabeledData:
             self.label.copy(deep=True),
             self.row_weight.copy(deep=True),
             self.days,
-            copy.copy(self.regobs_types)
+            copy.copy(self.regobs_types),
+            self.with_varsom
         )
         ld.is_normalized = self.is_normalized
         ld.scaler = self.scaler
@@ -892,7 +904,7 @@ class LabeledData:
         return ld
 
     @staticmethod
-    def from_csv(days, regobs_types):
+    def from_csv(days, regobs_types, with_varsom=True):
         """Read LabeledData from previously written .csv-file.
 
         :param days:            How far back in time values should data be included.
@@ -902,9 +914,10 @@ class LabeledData:
         regobs = ""
         if len(regobs_types) and days >= 2:
             regobs = f"_regobs_{'_'.join([REG_ENG[obs_type] for obs_type in regobs_types])}"
-        pathname_data = f"{se.local_storage}data_v{CSV_VERSION}_days_{days}{regobs}.csv"
-        pathname_label = f"{se.local_storage}label_v{CSV_VERSION}_days_{days}{regobs}.csv"
-        pathname_weight = f"{se.local_storage}weight_v{CSV_VERSION}_days_{days}{regobs}.csv"
+        varsom = "" if with_varsom else "_novarsom"
+        pathname_data = f"{se.local_storage}data_v{CSV_VERSION}_days_{days}{regobs}{varsom}.csv"
+        pathname_label = f"{se.local_storage}label_v{CSV_VERSION}_days_{days}{regobs}{varsom}.csv"
+        pathname_weight = f"{se.local_storage}weight_v{CSV_VERSION}_days_{days}{regobs}{varsom}.csv"
         try:
             data = pandas.read_csv(pathname_data, sep=";", header=[0, 1], index_col=[0, 1])
             label = pandas.read_csv(pathname_label, sep=";", header=[0, 1, 2], index_col=[0, 1], low_memory=False, dtype="U")
@@ -989,19 +1002,20 @@ def _get_weather_obs(year, max_file_age=23):
                 date = date.replace(day=1)
                 continue
             url = f'http://h-web03.nve.no/APSapi/TimeSeriesReader.svc/MountainWeather/-/{date.isoformat()}/no/true'
-            futures.append((date, session.get(url)))
+            futures.append((date, 0, session.get(url)))
             date += dt.timedelta(days=1)
 
 
-        for date, future in futures:
+        while len(futures):
+            date, retries, future = futures.pop()
             response = future.result()
-            retries = 0
-            while response.status_code != requests.codes.ok and retries < 10:
-                print(f"Failed to fetch weather for {date.isoformat()}, retrying", file=sys.stderr)
-                time.sleep(1)
-                retries += 1
-                url = f'http://h-web03.nve.no/APSapi/TimeSeriesReader.svc/MountainWeather/-/{date.isoformat()}/no/true'
-                response = requests.get(url)
+            if response.status_code != requests.codes.ok:
+                if retries < 5:
+                    url = f'http://h-web03.nve.no/APSapi/TimeSeriesReader.svc/MountainWeather/-/{date.isoformat()}/no/true'
+                    futures.insert(0, (date, retries + 1, session.get(url)))
+                else:
+                    print(f"Failed to fetch weather for {date.isoformat()}, skipping", file=sys.stderr)
+                continue
 
             json = response.json()
             for obs in json:
@@ -1071,24 +1085,25 @@ def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
         session = FuturesSession(max_workers=140)
         futures = []
 
-        first = requests.post(url=url, json=query, verify=False).json()
+        first = requests.post(url=url, json=query).json()
         results = results + first["Results"]
         total_matches = first['TotalMatches']
         searched = number_of_records
         while searched < total_matches:
             query["Offset"] += number_of_records
             query_copy = query.copy()
-            futures.append((query_copy, query["Offset"], session.post(url=url, json=query_copy, verify=False)))
+            futures.append((query_copy, query["Offset"], 0, session.post(url=url, json=query_copy)))
             searched += number_of_records
 
-        for query, offset, future in futures:
+        while len(futures):
+            query, offset, retries, future = futures.pop()
             response = future.result()
-            retries = 0
-            while response.status_code != requests.codes.ok and retries < 10:
-                print(f"Failed to fetch regobs, offset {offset}, retrying", file=sys.stderr)
-                time.sleep(1)
-                retries += 1
-                response = requests.get(url=url, json=query, verify=False)
+            if response.status_code != requests.codes.ok:
+                if retries < 5:
+                    futures.insert(0, (query, query["Offset"], session.post(url=url, json=query)))
+                else:
+                    print(f"Failed to fetch regobs, offset {offset}, skipping", file=sys.stderr)
+                continue
             raw_obses = response.json()
             results = results + raw_obses["Results"]
 
@@ -1182,6 +1197,16 @@ _camel_re_2 = re.compile('([a-z0-9])([A-Z])')
 def _camel_to_snake(name):
     name = _camel_re_1.sub(r'\1_\2', name)
     return _camel_re_2.sub(r'\1_\2', name).lower()
+
+
+def _merge(a, b):
+    b = b.copy()
+    for key in a:
+        if key in b and isinstance(a[key], dict) and isinstance(b[key], dict):
+            b[key] = _merge(a[key], b[key])
+        else:
+            b[key] = a[key]
+    return b
 
 
 class Error(Exception):
