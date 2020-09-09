@@ -519,11 +519,20 @@ class ForecastDataset:
 
         for season in seasons:
             regions = gm.get_forecast_regions(year=season, get_b_regions=True)
+            print(f"Fetching varsom, {season}")
             varsom, labels = _get_varsom_obs(year=season)
+            print(f"Merging varsom, {season}")
             self.varsom = _merge(self.varsom, varsom)
+            print(f"Merging labels, {season}")
             self.labels = _merge(self.labels, labels)
-            self.regobs = _merge(self.regobs, _get_regobs_obs(regions, season, regobs_types))
-            self.weather = _merge(self.weather, _get_weather_obs(season))
+            print(f"Fetching regobs, {season}")
+            regobs = _get_regobs_obs(regions, season, regobs_types)
+            print(f"Merging regobs, {season}")
+            self.regobs = _merge(self.regobs, regobs)
+            print(f"Fetching weather, {season}")
+            weather = _get_weather_obs(season)
+            print(f"Merging weather, {season}")
+            self.weather = _merge(self.weather, weather)
 
     def label(self, days, with_varsom=True):
         """Creates a LabeledData containing relevant label and features formatted either in a flat structure or as
@@ -1118,26 +1127,26 @@ def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
         session = FuturesSession(max_workers=140)
         futures = []
 
-        first = requests.post(url=url, json=query).json()
+        first = requests.post(url=url, json=query, verify=False).json()
         results = results + first["Results"]
         total_matches = first['TotalMatches']
         searched = number_of_records
         while searched < total_matches:
             query["Offset"] += number_of_records
             query_copy = query.copy()
-            futures.append((query_copy, query["Offset"], 0, session.post(url=url, json=query_copy)))
+            futures.append((query_copy, query["Offset"], 0, session.post(url=url, json=query_copy, verify=False)))
             searched += number_of_records
 
         while len(futures):
             query, offset, retries, future = futures.pop()
-            response = future.result()
-            if response.status_code != requests.codes.ok:
+            try:
+                raw_obses = future.result().json()
+            except:
                 if retries < 5:
-                    futures.insert(0, (query, query["Offset"], session.post(url=url, json=query)))
+                    futures.insert(0, (query, query["Offset"], retries + 1, session.post(url=url, json=query, verify=False)))
                 else:
                     print(f"Failed to fetch regobs, offset {offset}, skipping", file=sys.stderr)
                 continue
-            raw_obses = response.json()
             results = results + raw_obses["Results"]
 
         for raw_obs in results:
@@ -1241,11 +1250,10 @@ def _camel_to_snake(name):
     return _camel_re_2.sub(r'\1_\2', name).lower()
 
 
-def _merge(a, b):
-    b = b.copy()
+def _merge(b, a):
     for key in a:
         if key in b and isinstance(a[key], dict) and isinstance(b[key], dict):
-            b[key] = _merge(a[key], b[key])
+            b[key] = _merge(b[key], a[key])
         else:
             b[key] = a[key]
     return b
