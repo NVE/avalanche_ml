@@ -32,7 +32,7 @@ __author__ = 'arwi'
 
 _pwl = re.compile("(DH|SH|FC)")
 
-CSV_VERSION = "23"
+CSV_VERSION = "24"
 
 _NONE = ""
 
@@ -138,20 +138,38 @@ AVALANCHE_PROBLEM_LABEL = {
 }
 
 # Transformations from Mountain Weather API
-WEATHER = {
+WEATHER_VARSOM = {
+    "precip_most_exposed": ("precip_most_exposed", lambda x: x),
+    "precip": ("precip_region", lambda x: x),
+    "wind_speed": ("wind_speed", lambda x: WIND_SPEEDS.get(x, 0)),
+    "wind_change_speed": ("change_wind_speed", lambda x: WIND_SPEEDS.get(x, 0)),
+    "temp_min": ("temperature_min", lambda x: x),
+    "temp_max": ("temperature_max", lambda x: x),
+    "temp_lev": ("temperature_elevation", lambda x: x),
+    "temp_freeze_lev": ("freezing_level", lambda x: x),
+}
+for wind_dir in DIRECTIONS:
+    WEATHER_VARSOM[f"wind_dir_{wind_dir}"] = ("wind_direction", lambda x: x == wind_dir)
+for wind_dir in DIRECTIONS:
+    WEATHER_VARSOM[f"wind_chg_dir_{wind_dir}"] = ("change_wind_direction", lambda x: x == wind_dir)
+for h in [0, 6, 12, 18]:
+    WEATHER_VARSOM[f"wind_chg_start_{h}"] = ("change_hour_of_day_start", lambda x: x == h)
+for h in [0, 6, 12, 18]:
+    WEATHER_VARSOM[f"temp_fl_start_{h}"] = ("fl_hour_of_day_start", lambda x: x == h)
+
+WEATHER_API = {
     "precip_most_exposed": ("Precipitation_MostExposed_Median", lambda x: x),
     "precip": ("Precipitation_overall_ThirdQuartile", lambda x: x),
     "wind_speed": ("WindClassification", lambda x: WIND_SPEEDS.get(x)),
-    "wind_percentage": ("WindPercentage", lambda x: x),
     "temp_min": ("MinTemperature", lambda x: x),
     "temp_max": ("MaxTemperature", lambda x: x),
     "temp_lev": ("TemperatureElevation", lambda x: x),
     "temp_freeze_lev": ("FreezingLevelAltitude", lambda x: x),
 }
-for h in range(0, 24):
-    WEATHER[f"temp_fl_start_{h}"] = ("FreezingLevelTime", lambda x: x == h)
+for h in [0, 6, 12, 18]:
+    WEATHER_API[f"temp_fl_start_{h}"] = ("FreezingLevelTime", lambda x: _round_hours(x) == h)
 for wind_dir in DIRECTIONS:
-    WEATHER[f"wind_dir_{wind_dir}"] = ("WindDirection", lambda x: x == wind_dir)
+    WEATHER_API[f"wind_dir_{wind_dir}"] = ("WindDirection", lambda x: x == wind_dir)
 
 REG_ENG = {
     "Faretegn": "dangersign",
@@ -557,18 +575,18 @@ class ForecastDataset:
 
             row = OrderedDict({})
             for region in REGIONS:
-                row[(f"region_id_{region}", 0)] = float(region == "region_id")
+                row[(f"region_id_{region}", 0)] = float(region == region_id)
 
             if with_varsom:
                 for column in self.varsom.keys():
                     for n in range(1, days_v):
                         row[(column, n)] = self.varsom[column][prev_key(n)]
-            for key, (orig_key, mapping) in WEATHER.items():
+            for column in self.weather.keys():
                 for n in range(0, days_w):
                     try:
-                        row[(key, n)] = mapping(self.weather[orig_key][prev_key(n)])
+                        row[(column, n)] = self.weather[column][prev_key(n)]
                     except KeyError:
-                        row[(key, n)] = 0
+                        row[(column, n)] = 0
             for column in self.regobs.keys():
                 for n in range(2, days_r):
                     try:
@@ -606,7 +624,6 @@ class ForecastDataset:
         df_label.sort_index(axis=0, inplace=True)
         df_label.sort_index(axis=1, inplace=True)
         df.sort_index(axis=0, inplace=True)
-        df.sort_index(axis=1, inplace=True)
         df_weight.sort_index(axis=0, inplace=True)
 
         return LabeledData(df, df_label, df_weight, days, self.regobs_types, with_varsom)
@@ -926,7 +943,7 @@ class LabeledData:
             label.columns = pandas.MultiIndex.from_tuples(columns)
         except FileNotFoundError:
             raise CsvMissingError()
-        return LabeledData(data, label, row_weight, days, regobs_types)
+        return LabeledData(data, label, row_weight, days, regobs_types, with_varsom)
 
 def _get_varsom_obs(year, max_file_age=23):
     aw = gvp.get_all_forecasts(year=year)
@@ -977,6 +994,7 @@ def _get_varsom_obs(year, max_file_age=23):
     return forecasts, labels
 
 def _get_weather_obs(year, max_file_age=23):
+    aw = gvp.get_all_forecasts(year=year)
     file_name = f'{se.local_storage}weather_v{CSV_VERSION}_{year}.pickle'
     file_date_limit = dt.datetime.now() - dt.timedelta(hours=max_file_age)
     current_season = gm.get_season_from_date(dt.date.today() - dt.timedelta(30))
@@ -995,7 +1013,7 @@ def _get_weather_obs(year, max_file_age=23):
         session = FuturesSession(max_workers=300)
         date = date.replace(day=1)
         futures = []
-        weather = {}
+        weather_api_native = {}
         while date < to_date:
             if date.month in [7, 8, 9, 10]:
                 date = date.replace(month=date.month+1)
@@ -1022,25 +1040,40 @@ def _get_weather_obs(year, max_file_age=23):
                 region = int(float(obs['RegionId']))
                 if region not in REGIONS:
                     continue
-                if obs['Attribute'] not in weather:
-                    weather[obs['Attribute']] = {}
+                if obs['Attribute'] not in weather_api_native:
+                    weather_api_native[obs['Attribute']] = {}
                 region = int(float(obs['RegionId']))
                 try:
-                    weather[obs['Attribute']][(date.isoformat(), region)] = float(obs['Value'])
+                    weather_api_native[obs['Attribute']][(date.isoformat(), region)] = float(obs['Value'])
                 except ValueError:
-                    weather[obs['Attribute']][(date.isoformat(), region)] = obs['Value']
+                    weather_api_native[obs['Attribute']][(date.isoformat(), region)] = obs['Value']
 
         with open(file_name, 'wb') as handle:
-                pickle.dump(weather, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                pickle.dump(weather_api_native, handle, protocol=pickle.HIGHEST_PROTOCOL)
     else:
         try:
             with open(file_name, 'rb') as handle:
-                weather = pickle.load(handle)
+                weather_api_native = pickle.load(handle)
         except:
             os.remove(file_name)
             return _get_weather_obs(year, max_file_age)
 
-    return weather
+    weather_api = {}
+    for key, (orig_key, mapper) in WEATHER_API.items():
+        weather_api[key] = {}
+        if orig_key in weather_api_native:
+            for date_region, value in weather_api_native[orig_key].items():
+                weather_api[key][date_region] = mapper(value)
+
+    weather_varsom = {}
+    for forecast in aw:
+        for key, (orig_key, mapper) in WEATHER_VARSOM.items():
+            if key not in weather_varsom:
+                weather_varsom[key] = {}
+            date_region = (forecast.date_valid.isoformat(), forecast.region_id)
+            weather_varsom[key][date_region] = mapper(getattr(forecast.mountain_weather, orig_key))
+
+    return _merge(weather_varsom, weather_api)
 
 
 def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
@@ -1193,6 +1226,15 @@ def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
 _camel_re_1 = re.compile('(.)([A-Z][a-z]+)')
 _camel_re_2 = re.compile('([a-z0-9])([A-Z])')
 
+
+def _round_hours(hour):
+    if hour >= 21 or hour < 3:
+        return 0
+    if hour < 9:
+        return 6
+    if hour < 15:
+        return 12
+    return 18
 
 def _camel_to_snake(name):
     name = _camel_re_1.sub(r'\1_\2', name)
