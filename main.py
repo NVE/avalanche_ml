@@ -47,7 +47,7 @@ for split_idx, (training_data, testing_data) in enumerate(labeled_data.kfold(5))
     bm.fit(training_data, epochs=80, verbose=1)
 
     bm.dump("{0}_demo".format(model_prefix))
-    ubm = BulletinMachine.load("demo")
+    ubm = BulletinMachine.load("{0}_demo".format(model_prefix))
 
     print(f"Testing fold: {split_idx}")
     predicted_data = ubm.predict(testing_data)
