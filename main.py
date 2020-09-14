@@ -1,5 +1,6 @@
 from aggregatedata import ForecastDataset, LabeledData, REG_ENG, CsvMissingError
 from machine import BulletinMachine
+from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier
 from sklearn.linear_model import MultiTaskElasticNet
 
@@ -12,15 +13,16 @@ class_weight = {
 }
 
 def classifier_creator(indata, outdata, class_weight=None):
+    return DecisionTreeClassifier(max_depth=7)
     # return RandomForestClassifier(n_estimators=200, class_weight=class_weight)
-    return ExtraTreesClassifier(n_estimators=200, class_weight=class_weight)
+    # return ExtraTreesClassifier(n_estimators=200, class_weight=class_weight)
 
 
 def regressor_creator(indata, outdata):
     return MultiTaskElasticNet()
 
 
-model_prefix = 'et'
+model_prefix = 'dt'
 days = 7
 regobs_types = list(REG_ENG.keys())
 labeled_data = None
@@ -46,8 +48,8 @@ for split_idx, (training_data, testing_data) in enumerate(labeled_data.kfold(5))
     )
     bm.fit(training_data, epochs=80, verbose=1)
 
-    bm.dump("{0}_demo".format(model_prefix))
-    ubm = BulletinMachine.load("{0}_demo".format(model_prefix))
+    bm.dump(model_prefix)
+    ubm = BulletinMachine.load(model_prefix)
 
     print(f"Testing fold: {split_idx}")
     predicted_data = ubm.predict(testing_data)
