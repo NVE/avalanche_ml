@@ -945,7 +945,7 @@ class LabeledData:
         try:
             data = pandas.read_csv(pathname_data, sep=";", header=[0, 1], index_col=[0, 1])
             label = pandas.read_csv(pathname_label, sep=";", header=[0, 1, 2], index_col=[0, 1], low_memory=False, dtype="U")
-            row_weight = pandas.read_csv(pathname_weight, sep=";", header=None, index_col=[0, 1], low_memory=False)
+            row_weight = pandas.read_csv(pathname_weight, sep=";", header=None, index_col=[0, 1], low_memory=False, squeeze=True)
             columns = [(col[0], re.sub(r'Unnamed:.*', _NONE, col[1]), col[2]) for col in label.columns.tolist()]
             label.columns = pandas.MultiIndex.from_tuples(columns)
         except FileNotFoundError:
