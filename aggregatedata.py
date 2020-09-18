@@ -14,7 +14,7 @@ import numpy as np
 import pandas
 import requests
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.model_selection import KFold
+from sklearn.model_selection import StratifiedKFold, KFold
 
 
 old_dir = os.getcwd()
@@ -704,7 +704,7 @@ class LabeledData:
         else:
             return self.copy()
 
-    def kfold(self, k=5, shuffle=True):
+    def kfold(self, k=5, shuffle=True, stratify=None):
         """Returns an iterable of LabeledData-tuples. The first element is the training dataset
         and the second is for testing.
 
@@ -712,9 +712,14 @@ class LabeledData:
         :param shuffle: Bool: Whether rows should be shuffled before folding. Defaults to True.
         :return: Iterable<(LabeledData, LabeledData)>
         """
-        kf = KFold(n_splits=k, shuffle=shuffle)
+        if stratify is None:
+            kf = KFold(n_splits=k, shuffle=shuffle)
+            split = kf.split(self.data)
+        else:
+            kf = StratifiedKFold(n_splits=k, shuffle=shuffle)
+            split = kf.split(self.data, self.label[stratify])
         array = []
-        for train_index, test_index in kf.split(self.data):
+        for train_index, test_index in split:
             training_data = self.copy()
             training_data.data = training_data.data.iloc[train_index]
             training_data.label = training_data.label.iloc[train_index]

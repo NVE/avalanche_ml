@@ -36,7 +36,8 @@ except CsvMissingError:
 
 f1 = None
 importances = None
-for split_idx, (training_data, testing_data) in enumerate(labeled_data.kfold(5)):
+strat = ("CLASS", "", "danger_level")
+for split_idx, (training_data, testing_data) in enumerate(labeled_data.kfold(5, stratify=strat)):
     print(f"Training fold: {split_idx}")
     bm = BulletinMachine(
         classifier_creator,
