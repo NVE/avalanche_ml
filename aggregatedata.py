@@ -7,13 +7,12 @@ import os
 import pickle
 import re
 import sys
-import time
+import math
+from concurrent import futures
 from collections import OrderedDict
-
 import numpy as np
 import pandas
 import requests
-from requests_futures.sessions import FuturesSession
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import KFold
 
@@ -620,7 +619,6 @@ class ForecastDataset:
                 table[key][entry_idx] = row[key]
             # Build DataFrame iteratively to preserve system memory (floats in dicts are apparently expensive).
             if (monotonic_idx > 0 and monotonic_idx % 1000 == 0) or monotonic_idx == len(df_label.index) - 1:
-                print(monotonic_idx)
                 df_new = pandas.DataFrame(table, dtype=np.float32).fillna(0)
                 df_weight_new = pandas.Series(row_weight)
                 df = df_new if df is None else pandas.concat([df, df_new])
@@ -1019,43 +1017,45 @@ def _get_weather_obs(year, max_file_age=23):
     date, to_date = gm.get_dates_from_season(year)
 
     if get_new:
-        session = FuturesSession(max_workers=300)
         date = date.replace(day=1)
-        futures = []
+        futures_tuples = []
         weather_api_native = {}
-        while date < to_date:
-            if date.month in [7, 8, 9, 10]:
-                date = date.replace(month=date.month+1)
-                date = date.replace(day=1)
-                continue
-            url = f'http://h-web03.nve.no/APSapi/TimeSeriesReader.svc/MountainWeather/-/{date.isoformat()}/no/true'
-            futures.append((date, 0, session.get(url)))
-            date += dt.timedelta(days=1)
-
-
-        while len(futures):
-            date, retries, future = futures.pop()
-            response = future.result()
-            if response.status_code != requests.codes.ok:
-                if retries < 5:
-                    url = f'http://h-web03.nve.no/APSapi/TimeSeriesReader.svc/MountainWeather/-/{date.isoformat()}/no/true'
-                    futures.insert(0, (date, retries + 1, session.get(url)))
-                else:
-                    print(f"Failed to fetch weather for {date.isoformat()}, skipping", file=sys.stderr)
-                continue
-
-            json = response.json()
-            for obs in json:
-                region = int(float(obs['RegionId']))
-                if region not in REGIONS:
+        with futures.ThreadPoolExecutor(300) as executor:
+            while date < to_date:
+                if date.month in [7, 8, 9, 10]:
+                    date = date.replace(month=date.month+1)
+                    date = date.replace(day=1)
                     continue
-                if obs['Attribute'] not in weather_api_native:
-                    weather_api_native[obs['Attribute']] = {}
-                region = int(float(obs['RegionId']))
-                try:
-                    weather_api_native[obs['Attribute']][(date.isoformat(), region)] = float(obs['Value'])
-                except ValueError:
-                    weather_api_native[obs['Attribute']][(date.isoformat(), region)] = obs['Value']
+                url = f'http://h-web03.nve.no/APSapi/TimeSeriesReader.svc/MountainWeather/-/{date.isoformat()}/no/true'
+                future = executor.submit(lambda: requests.get(url))
+                futures_tuples.append((date, 0, future))
+                date += dt.timedelta(days=1)
+
+
+            while len(futures_tuples):
+                date, retries, future = futures_tuples.pop()
+                response = future.result()
+                if response.status_code != requests.codes.ok:
+                    if retries < 5:
+                        url = f'http://h-web03.nve.no/APSapi/TimeSeriesReader.svc/MountainWeather/-/{date.isoformat()}/no/true'
+                        future = executor.submit(lambda: requests.get(url))
+                        futures_tuples.insert(0, (date, retries + 1, future))
+                    else:
+                        print(f"Failed to fetch weather for {date.isoformat()}, skipping", file=sys.stderr)
+                    continue
+
+                json = response.json()
+                for obs in json:
+                    region = int(float(obs['RegionId']))
+                    if region not in REGIONS:
+                        continue
+                    if obs['Attribute'] not in weather_api_native:
+                        weather_api_native[obs['Attribute']] = {}
+                    region = int(float(obs['RegionId']))
+                    try:
+                        weather_api_native[obs['Attribute']][(date.isoformat(), region)] = float(obs['Value'])
+                    except ValueError:
+                        weather_api_native[obs['Attribute']][(date.isoformat(), region)] = obs['Value']
 
         with open(file_name, 'wb') as handle:
                 pickle.dump(weather_api_native, handle, protocol=pickle.HIGHEST_PROTOCOL)
@@ -1124,30 +1124,33 @@ def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
 
     results = []
     if get_new:
-        session = FuturesSession(max_workers=140)
-        futures = []
+        future_tuples = []
 
         first = requests.post(url=url, json=query, verify=False).json()
         results = results + first["Results"]
         total_matches = first['TotalMatches']
         searched = number_of_records
-        while searched < total_matches:
-            query["Offset"] += number_of_records
-            query_copy = query.copy()
-            futures.append((query_copy, query["Offset"], 0, session.post(url=url, json=query_copy, verify=False)))
-            searched += number_of_records
 
-        while len(futures):
-            query, offset, retries, future = futures.pop()
-            try:
-                raw_obses = future.result().json()
-            except:
-                if retries < 5:
-                    futures.insert(0, (query, query["Offset"], retries + 1, session.post(url=url, json=query, verify=False)))
-                else:
-                    print(f"Failed to fetch regobs, offset {offset}, skipping", file=sys.stderr)
-                continue
-            results = results + raw_obses["Results"]
+        with futures.ThreadPoolExecutor(140) as executor:
+            while searched < total_matches:
+                query["Offset"] += number_of_records
+                query_copy = query.copy()
+                future = executor.submit(lambda: requests.post(url=url, json=query_copy, verify=False))
+                future_tuples.append((query_copy, query["Offset"], 0, future))
+                searched += number_of_records
+
+            while len(future_tuples):
+                query, offset, retries, future = future_tuples.pop()
+                try:
+                    raw_obses = future.result().json()
+                except:
+                    if retries < 5:
+                        future = executor.submit(lambda: requests.post(url=url, json=query, verify=False))
+                        future_tuples.insert(0, (query, query["Offset"], retries + 1, future))
+                    else:
+                        print(f"Failed to fetch regobs, offset {offset}, skipping", file=sys.stderr)
+                    continue
+                results = results + raw_obses["Results"]
 
         for raw_obs in results:
             for reg in raw_obs["Registrations"]:
