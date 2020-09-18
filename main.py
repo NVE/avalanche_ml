@@ -22,16 +22,16 @@ def regressor_creator(indata, outdata):
     return MultiTaskElasticNet()
 
 
-model_prefix = 'dt'
+model_prefix = 'dt_no_varsom'
 days = 7
 regobs_types = list(REG_ENG.keys())
 labeled_data = None
 try:
     print("Reading csv")
-    labeled_data = LabeledData.from_csv(days=days, regobs_types=regobs_types)
+    labeled_data = LabeledData.from_csv(days=days, regobs_types=regobs_types, with_varsom=False)
 except CsvMissingError:
     print("Csv missing. Fetching online data. (This takes a long time.)")
-    labeled_data = ForecastDataset(regobs_types=regobs_types).label(days=days)#, with_varsom=False)
+    labeled_data = ForecastDataset(regobs_types=regobs_types).label(days=days, with_varsom=False)
     labeled_data.to_csv()
 
 f1 = None
