@@ -34,6 +34,8 @@ except CsvMissingError:
     labeled_data = ForecastDataset(regobs_types=regobs_types).label(days=days, with_varsom=False)
     labeled_data.to_csv()
 
+labeled_data = labeled_data.normalize()
+
 f1 = None
 importances = None
 strat = ("CLASS", "", "danger_level")
