@@ -518,19 +518,12 @@ class ForecastDataset:
 
         for season in seasons:
             regions = gm.get_forecast_regions(year=season, get_b_regions=True)
-            print(f"Fetching varsom, {season}")
             varsom, labels = _get_varsom_obs(year=season)
-            print(f"Merging varsom, {season}")
             self.varsom = _merge(self.varsom, varsom)
-            print(f"Merging labels, {season}")
             self.labels = _merge(self.labels, labels)
-            print(f"Fetching regobs, {season}")
             regobs = _get_regobs_obs(regions, season, regobs_types)
-            print(f"Merging regobs, {season}")
             self.regobs = _merge(self.regobs, regobs)
-            print(f"Fetching weather, {season}")
             weather = _get_weather_obs(season)
-            print(f"Merging weather, {season}")
             self.weather = _merge(self.weather, weather)
 
     def label(self, days, with_varsom=True):
@@ -1131,7 +1124,7 @@ def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
     if get_new:
         future_tuples = []
 
-        first = requests.post(url=url, json=query, verify=False).json()
+        first = requests.post(url=url, json=query).json()
         results = results + first["Results"]
         total_matches = first['TotalMatches']
         searched = number_of_records
@@ -1140,7 +1133,7 @@ def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
             while searched < total_matches:
                 query["Offset"] += number_of_records
                 query_copy = query.copy()
-                future = executor.submit(lambda: requests.post(url=url, json=query_copy, verify=False))
+                future = executor.submit(lambda: requests.post(url=url, json=query_copy))
                 future_tuples.append((query_copy, query["Offset"], 0, future))
                 searched += number_of_records
 
@@ -1150,7 +1143,7 @@ def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
                     raw_obses = future.result().json()
                 except:
                     if retries < 5:
-                        future = executor.submit(lambda: requests.post(url=url, json=query, verify=False))
+                        future = executor.submit(lambda: requests.post(url=url, json=query))
                         future_tuples.insert(0, (query, query["Offset"], retries + 1, future))
                     else:
                         print(f"Failed to fetch regobs, offset {offset}, skipping", file=sys.stderr)
