@@ -34,7 +34,10 @@ except CsvMissingError:
     labeled_data = ForecastDataset(regobs_types=regobs_types).label(days=days, with_varsom=False)
     labeled_data.to_csv()
 
-labeled_data = labeled_data.normalize()
+labeled_data.label.drop("REAL", axis=1, level=0, inplace=True)
+labeled_data.pred.drop("REAL", axis=1, level=0, inplace=True)
+labeled_data.label.drop("MULTI", axis=1, level=0, inplace=True)
+labeled_data.pred.drop("MULTI", axis=1, level=0, inplace=True)
 
 f1 = None
 importances = None

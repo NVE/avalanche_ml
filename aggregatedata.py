@@ -657,13 +657,17 @@ class LabeledData:
         self.label = label
         self.label = self.label.replace(_NONE, 0)
         self.label = self.label.replace(np.nan, 0)
-        self.label['CLASS', _NONE] = self.label['CLASS', _NONE].replace(0, _NONE).values
-        self.label['MULTI'] = self.label['MULTI'].replace(0, "0").values
+        try: self.label['CLASS', _NONE] = self.label['CLASS', _NONE].replace(0, _NONE).values
+        except KeyError: pass
+        try: self.label['MULTI'] = self.label['MULTI'].replace(0, "0").values
+        except KeyError: pass
         self.pred = label.copy()
         for col in self.pred.columns:
             self.pred[col].values[:] = 0
-        self.pred['CLASS', _NONE] = _NONE
-        self.pred['MULTI'] = "0"
+        try: self.pred['CLASS', _NONE] = _NONE
+        except KeyError: pass
+        try: self.pred['MULTI'] = "0"
+        except KeyError: pass
         self.days = days
         self.with_varsom = with_varsom
         self.regobs_types = regobs_types
@@ -796,56 +800,74 @@ class LabeledData:
         dummies = {}
         for name, df in [('label', self.label), ('pred', self.pred)]:
             dummies[name] = {"CLASS": {}, "MULTI": {}, "REAL": {}}
-            for subprob in df["CLASS"].columns.get_level_values(0).unique():
-                if name == 'label':
-                    if subprob == _NONE:
-                        sub_df = df["CLASS"][subprob]
+            for subprob in df.loc[:, ["CLASS"]].columns.get_level_values(1).unique():
+                try:
+                    if name == 'label':
+                        if subprob == _NONE:
+                            sub_df = df["CLASS", subprob]
+                        else:
+                            idx = 0
+                            for n in [1, 2, 3]:
+                                try:
+                                    idx += df["CLASS"][_NONE][f"problem_{n}"].eq(subprob).astype(np.int)
+                                except KeyError:
+                                    pass
+                            sub_df = df["CLASS"][subprob].loc[idx > 0]
+                        try: col = pandas.get_dummies(sub_df, prefix_sep=':').columns
+                        except ValueError: col = []
+                        dum = pandas.DataFrame(pandas.get_dummies(sub_df, prefix_sep=':'), columns=col)
+                        dummies[name]["CLASS"][subprob] = dum
+
+                        columns = dummies["label"]["CLASS"][subprob].columns.values.astype("U")
+                        idx = pandas.MultiIndex.from_tuples(
+                            [("CLASS", subprob, a[0], a[2]) for a in np.char.partition(columns, sep=":")],
+                            names=["type", "problem", "attribute", "label"]
+                        )
+                        dummies["label"]["CLASS"][subprob].columns = idx
                     else:
-                        sub_df = df["CLASS"][subprob].loc[
-                            df["CLASS"][_NONE]["problem_1"].eq(subprob).astype(np.int) +
-                            df["CLASS"][_NONE]["problem_2"].eq(subprob).astype(np.int) +
-                            df["CLASS"][_NONE]["problem_3"].eq(subprob).astype(np.int) > 0
-                        ]
-                    col = pandas.get_dummies(sub_df, prefix_sep=':').columns
-                    dum = pandas.DataFrame(pandas.get_dummies(df["CLASS"][subprob], prefix_sep=':'), columns=col)
-                    dummies[name]["CLASS"][subprob] = dum
-                else:
-                    col = dummies["label"]["CLASS"][subprob].columns
-                    dum = pandas.DataFrame(pandas.get_dummies(df["CLASS"][subprob], prefix_sep=':'), columns=col)
+                        dum = pandas.DataFrame(pandas.get_dummies(df["CLASS", subprob], prefix_sep=':'), columns=col)
 
-                    dummies[name]["CLASS"][subprob] = dum
+                        dummies[name]["CLASS"][subprob] = dum
 
-                    columns = dummies["label"]["CLASS"][subprob].columns.values.astype("U")
-                    idx = pandas.MultiIndex.from_tuples(
-                        [("CLASS", subprob, a[0], a[2]) for a in np.char.partition(columns, sep=":")],
-                        names=["type", "problem", "attribute", "label"]
-                    )
-                    dummies["label"]["CLASS"][subprob].columns = idx
-                    dummies["pred"]["CLASS"][subprob].columns = idx
+                        dummies["pred"]["CLASS"][subprob].columns = dummies["label"]["CLASS"][subprob].columns
+                except KeyError:
+                    pass
 
-            for subprob in df['MULTI'].columns.get_level_values(0).unique():
-                multi = df['MULTI'][subprob].replace(_NONE, "0").values.astype(np.int).astype("U")
-                if name == 'label':
-                    multimax = np.max(np.char.str_len(multi), axis=0)
-                multi = np.char.zfill(multi, multimax)
-                multi = np.nan_to_num(np.array([[list(elem) for elem in row] for row in multi]))
-                multi = multi.reshape(multi.shape[0], multi.shape[1] * multi.shape[2]).astype(np.float)
-                columns = zip(df["MULTI"][subprob].columns, multimax)
-                columns = [[("MULTI", subprob, c, str(n)) for n in range(max)] for c, max in columns]
-                columns = [item for sublist in columns for item in sublist]
-                columns = pandas.MultiIndex.from_tuples(columns, names=["type", "problem", "attribute", "label"])
-                dummies[name]["MULTI"][subprob] = pandas.DataFrame(multi, index=df.index, columns=columns)
+            try:
+                for subprob in df.loc[:, ['MULTI']].columns.get_level_values(1).unique():
+                    try:
+                        multi = df['MULTI'][subprob].replace(_NONE, "0").values.astype(np.int).astype("U")
+                        if name == 'label':
+                            multimax = np.max(np.char.str_len(multi), axis=0)
+                        multi = np.char.zfill(multi, multimax)
+                        multi = np.nan_to_num(np.array([[list(elem) for elem in row] for row in multi]))
+                        multi = multi.reshape(multi.shape[0], multi.shape[1] * multi.shape[2]).astype(np.float)
+                        columns = zip(df["MULTI"][subprob].columns, multimax)
+                        columns = [[("MULTI", subprob, c, str(n)) for n in range(max)] for c, max in columns]
+                        columns = [item for sublist in columns for item in sublist]
+                        columns = pandas.MultiIndex.from_tuples(columns, names=["type", "problem", "attribute", "label"])
+                        dummies[name]["MULTI"][subprob] = pandas.DataFrame(multi, index=df.index, columns=columns)
+                    except KeyError:
+                        pass
+            except KeyError:
+                pass
 
-            for subprob in df["REAL"].columns.get_level_values(0).unique():
-                columns = pandas.MultiIndex.from_tuples(
-                    [("REAL", subprob, a, "") for a in df["REAL"][subprob].columns],
-                    names=["type", "problem", "attribute", "label"]
-                )
-                dummies[name]["REAL"][subprob] = pandas.DataFrame(
-                    df['REAL'][subprob].values,
-                    columns=columns,
-                    index=df.index
-                )
+            try:
+                for subprob in df.loc[:, ["REAL"]].columns.get_level_values(1).unique():
+                    try:
+                        columns = pandas.MultiIndex.from_tuples(
+                            [("REAL", subprob, a, "") for a in df["REAL"][subprob].columns],
+                            names=["type", "problem", "attribute", "label"]
+                        )
+                        dummies[name]["REAL"][subprob] = pandas.DataFrame(
+                            df['REAL'][subprob].values,
+                            columns=columns,
+                            index=df.index
+                        )
+                    except KeyError:
+                        pass
+            except KeyError:
+                pass
 
         return dummies
 
@@ -880,32 +902,49 @@ class LabeledData:
             aw.mountain_weather = gf.MountainWeather()
             for int_attr, dict in LABEL_GLOBAL.items():
                 for idx, ext_attr in enumerate(dict['ext_attr']):
-                    ext_val = dict['values'][row['CLASS', '', int_attr]][idx]
-                    setattr(aw, ext_attr, ext_val)
-            for p_idx in range(1, int(row['CLASS', '', 'problem_amount']) + 1):
-                p_prefix = f"problem_{p_idx}"
-                p_name = row['CLASS', '', p_prefix]
-                if p_name == "":
-                    break
-                problem = gf.AvalancheWarningProblem()
-                problem.avalanche_problem_id = -p_idx + 4
-                for idx, ext_attr in enumerate(LABEL_PROBLEM_PRIMARY['ext_attr']):
-                    ext_val = LABEL_PROBLEM_PRIMARY['values'][row['CLASS', '', p_prefix]][idx]
-                    setattr(problem, ext_attr, ext_val)
-                for int_attr, dict in LABEL_PROBLEM.items():
-                    for idx, ext_attr in enumerate(dict['ext_attr']):
-                        ext_val = dict['values'][row['CLASS', p_name, int_attr]][idx]
+                    try:
+                        ext_val = dict['values'][row['CLASS', '', int_attr]][idx]
+                        setattr(aw, ext_attr, ext_val)
+                    except KeyError:
+                        pass
+            try:
+                for p_idx in [1, 2, 3]:
+                    p_prefix = f"problem_{p_idx}"
+                    try:
+                        p_name = row['CLASS', '', p_prefix]
+                    except KeyError:
+                        continue
+                    if p_name == "":
+                        break
+                    problem = gf.AvalancheWarningProblem()
+                    problem.avalanche_problem_id = -p_idx + 4
+                    for idx, ext_attr in enumerate(LABEL_PROBLEM_PRIMARY['ext_attr']):
+                        try:
+                            ext_val = LABEL_PROBLEM_PRIMARY['values'][row['CLASS', '', p_prefix]][idx]
+                            setattr(problem, ext_attr, ext_val)
+                        except KeyError: pass
+                    for int_attr, dict in LABEL_PROBLEM.items():
+                        for idx, ext_attr in enumerate(dict['ext_attr']):
+                            try:
+                                ext_val = dict['values'][row['CLASS', p_name, int_attr]][idx]
+                                setattr(problem, ext_attr, ext_val)
+                            except KeyError: pass
+                    for int_attr, dict in LABEL_PROBLEM_MULTI.items():
+                        try:
+                            ext_attr = dict['ext_attr']
+                            ext_val = row['MULTI', p_name, int_attr]
+                        except KeyError: pass
                         setattr(problem, ext_attr, ext_val)
-                for int_attr, dict in LABEL_PROBLEM_MULTI.items():
-                    ext_attr = dict['ext_attr']
-                    ext_val = row['MULTI', p_name, int_attr]
-                    setattr(problem, ext_attr, ext_val)
-                for int_attr, dict in LABEL_PROBLEM_REAL.items():
-                    ext_attr = dict['ext_attr']
-                    ext_val = row['REAL', p_name, int_attr]
-                    setattr(problem, ext_attr, ext_val)
-                aw.avalanche_problems.append(problem)
-            aws.append(aw)
+                    for int_attr, dict in LABEL_PROBLEM_REAL.items():
+                        try:
+                            ext_attr = dict['ext_attr']
+                            ext_val = row['REAL', p_name, int_attr]
+                            setattr(problem, ext_attr, ext_val)
+                        except KeyError: pass
+                    aw.avalanche_problems.append(problem)
+                aws.append(aw)
+            except KeyError:
+                pass
         return aws
 
     def copy(self):
