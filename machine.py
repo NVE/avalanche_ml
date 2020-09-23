@@ -83,7 +83,10 @@ class BulletinMachine:
         self.X_columns = X.columns
         self.row_weight = labeled_data.row_weight
 
-        prob_cols = y.loc[:, [name.startswith("problem_") for name in y.columns.get_level_values(2)]]["CLASS", ""]
+        try:
+            prob_cols = y.loc[:, [name.startswith("problem_") for name in y.columns.get_level_values(2)]]["CLASS", ""]
+        except KeyError:
+            prob_cols = pandas.DataFrame(index=y.index)
         for subprob, dummy in self.dummies["CLASS"].items():
             # Special machine for danger level etc.
             if subprob == _NONE:
@@ -192,74 +195,88 @@ class BulletinMachine:
         X_prim = X_timeseries if self.is_timeseries[_NONE] else X
         prim_smax = pandas.DataFrame(self.machines_class[""].predict(X_prim), columns=idx)
         for attr in ["danger_level", "emergency_warning"]:
-            idx = np.argmax(prim_smax.loc[:, attr].values, axis=1)
-            y["CLASS", "", attr] = np.array(list(prim_smax.loc[:, attr].columns))[idx]
+            try:
+                idx = np.argmax(prim_smax.loc[:, attr].values, axis=1)
+                y["CLASS", "", attr] = np.array(list(prim_smax.loc[:, attr].columns))[idx]
+            except KeyError:
+                pass
 
         # Fix problem prediction to become a valid forecast (no double problems, no problem following _NONE).
         prob_cols = np.array([_NONE] + list(dict.fromkeys(PROBLEMS.values())))
-        prob_smax = [pandas.DataFrame(prim_smax[f"problem_{n}"], columns=prob_cols).fillna(0) for n in [1, 2, 3]]
-        prob_smax = np.stack(prob_smax, axis=1)
-        idxs = np.flip(prob_smax.argsort(axis=2), axis=2)
-        is_prob = np.any(np.sum(prob_smax.astype(np.bool), axis=2) > 1)
-        for _ in [0, 1]:
-            if is_prob:
-                # If second likeliest problem_n-1 is very likely, use that instead
-                fst = np.expand_dims(np.arange(y.shape[0]), axis=1)
-                sec = [[0, 1]] * y.shape[0]
-                likely = prob_smax[fst, sec, idxs[fst, sec, 1]] > 0.75 * prob_smax[fst, sec, idxs[fst, sec, 0]]
-                idxs[:, 1:, 0] = idxs[:, 1:, 0] * np.invert(likely) + idxs[:, :-1, 1] * likely
-                # If equal to problem_n-1/2, set to second likeliest alternative.
-                prev_eq = idxs[:, 1:, :1] == idxs[:, :-1, :1]
-                idxs[:, 1:, :-1] = idxs[:, 1:, :-1] * np.invert(prev_eq) + idxs[:, 1:, 1:] * prev_eq
-            else:
-                # If equal to problem_n-1/2, set to _NONE (as we only have 1-hot results).
-                prev_eq = idxs[:, 1:, :1] == idxs[:, :-1, :1]
-                idxs[:, 1:, :-1] = idxs[:, 1:, :-1] * np.invert(prev_eq)
-            # Set to None if problem_n-1/2 was None.
-            idxs[:, 1:] = idxs[:, 1:] * idxs[:, :-1, :1].astype(np.bool)
+        prob_smax = []
         for n in [1, 2, 3]:
-            y["CLASS", "", f"problem_{n}"] = prob_cols[idxs[:, n - 1, 0]]
-        y["CLASS", "", "problem_amount"] = np.sum(idxs[:, :, 0].astype(np.bool), axis=1).astype(np.int).astype("U")
+            try:
+                smax_df = pandas.DataFrame(prim_smax[f"problem_{n}"], columns=prob_cols).fillna(0)
+                prob_smax.append(smax_df)
+            except KeyError:
+                pass
 
-        # Calculate relevant subproblems
-        problem_cols = y.loc[:, [name.startswith("problem_") for name in y.columns.get_level_values(2)]]["CLASS", ""]
-        for subprob, dummy in self.dummies["CLASS"].items():
-            if subprob == _NONE:
-                continue
-            rows = np.any(np.char.equal(problem_cols.values.astype("U"), subprob), axis=1)
-            if np.sum(rows):
-                dummy = self.dummies["CLASS"][subprob]
-                X_class = X_timeseries if self.is_timeseries["CLASS"] else X
-                pred = pandas.DataFrame(
-                    self.machines_class[subprob].predict(X_class[np.ix_(rows)]), columns=dummy.columns
-                )
-                for attr in pred.columns.get_level_values(2).unique():
-                    idx = np.argmax(pred["CLASS", subprob].loc[:, attr].values, axis=1)
-                    labels = np.array(list(pred["CLASS", subprob].loc[:, attr].columns))[idx]
-                    y["CLASS", subprob, attr].values[np.ix_(rows)] = labels
-        for subprob, dummy in self.dummies["MULTI"].items():
-            rows = np.any(np.char.equal(problem_cols.values.astype("U"), subprob), axis=1)
-            if np.sum(rows):
-                dummy = self.dummies["MULTI"][subprob]
-                X_multi = X_timeseries if self.is_timeseries["MULTI"] else X
-                pred = pandas.DataFrame(
-                    self.machines_multi[subprob].predict(X_multi[np.ix_(rows)]), columns=dummy.columns
-                )
-                for attr in pred.columns.get_level_values(2).unique():
-                    labels = pred["MULTI", subprob, attr].values.astype(np.int).astype("U")
-                    y["MULTI", subprob, attr] = "0"
-                    y["MULTI", subprob, attr].values[np.ix_(rows)] = [''.join(row) for row in labels]
-        for subprob, dummy in self.dummies["REAL"].items():
-            rows = np.any(np.char.equal(problem_cols.values.astype("U"), subprob), axis=1)
-            if np.sum(rows):
-                dummy = self.dummies["REAL"][subprob]
-                X_real = X_timeseries if self.is_timeseries["REAL"] else X
-                pred = pandas.DataFrame(
-                    self.machines_real[subprob].predict(X_real[np.ix_(rows)]), columns=dummy.columns
-                )
-                for attr in pred.columns.get_level_values(2).unique():
-                    y["REAL", subprob, attr] = 0
-                    y["REAL", subprob, attr].values[np.ix_(rows)] = pred["REAL", subprob, attr].values
+        if len(prob_smax) > 0:
+            prob_smax = np.stack(prob_smax, axis=1)
+            idxs = np.flip(prob_smax.argsort(axis=2), axis=2)
+            is_prob = np.any(np.sum(prob_smax.astype(np.bool), axis=2) > 1)
+            for _ in range(0, prob_smax.shape[1] - 1):
+                if is_prob:
+                    # If second likeliest problem_n-1 is very likely, use that instead
+                    fst = np.expand_dims(np.arange(y.shape[0]), axis=1)
+                    sec = [[0, 1]] * y.shape[0]
+                    likely = prob_smax[fst, sec, idxs[fst, sec, 1]] > 0.75 * prob_smax[fst, sec, idxs[fst, sec, 0]]
+                    idxs[:, 1:, 0] = idxs[:, 1:, 0] * np.invert(likely) + idxs[:, :-1, 1] * likely
+                    # If equal to problem_n-1/2, set to second likeliest alternative.
+                    prev_eq = idxs[:, 1:, :1] == idxs[:, :-1, :1]
+                    idxs[:, 1:, :-1] = idxs[:, 1:, :-1] * np.invert(prev_eq) + idxs[:, 1:, 1:] * prev_eq
+                else:
+                    # If equal to problem_n-1/2, set to _NONE (as we only have 1-hot results).
+                    prev_eq = idxs[:, 1:, :1] == idxs[:, :-1, :1]
+                    idxs[:, 1:, :-1] = idxs[:, 1:, :-1] * np.invert(prev_eq)
+                # Set to None if problem_n-1/2 was None.
+                idxs[:, 1:] = idxs[:, 1:] * idxs[:, :-1, :1].astype(np.bool)
+            idx = 0
+            for n in [1, 2, 3]:
+                if f"problem_{n}" in prim_smax.columns:
+                    y["CLASS", "", f"problem_{n}"] = prob_cols[idxs[:, idx, 0]]
+                    idx += 1
+            y["CLASS", "", "problem_amount"] = np.sum(idxs[:, :, 0].astype(np.bool), axis=1).astype(np.int).astype("U")
+
+            # Calculate relevant subproblems
+            problem_cols = y.loc[:, [name.startswith("problem_") for name in y.columns.get_level_values(2)]]["CLASS",""]
+            for subprob, dummy in self.dummies["CLASS"].items():
+                if subprob == _NONE:
+                    continue
+                rows = np.any(np.char.equal(problem_cols.values.astype("U"), subprob), axis=1)
+                if np.sum(rows):
+                    dummy = self.dummies["CLASS"][subprob]
+                    X_class = X_timeseries if self.is_timeseries["CLASS"] else X
+                    pred = pandas.DataFrame(
+                        self.machines_class[subprob].predict(X_class[np.ix_(rows)]), columns=dummy.columns
+                    )
+                    for attr in pred.columns.get_level_values(2).unique():
+                        idx = np.argmax(pred["CLASS", subprob].loc[:, attr].values, axis=1)
+                        labels = np.array(list(pred["CLASS", subprob].loc[:, attr].columns))[idx]
+                        y["CLASS", subprob, attr].values[np.ix_(rows)] = labels
+            for subprob, dummy in self.dummies["MULTI"].items():
+                rows = np.any(np.char.equal(problem_cols.values.astype("U"), subprob), axis=1)
+                if np.sum(rows):
+                    dummy = self.dummies["MULTI"][subprob]
+                    X_multi = X_timeseries if self.is_timeseries["MULTI"] else X
+                    pred = pandas.DataFrame(
+                        self.machines_multi[subprob].predict(X_multi[np.ix_(rows)]), columns=dummy.columns
+                    )
+                    for attr in pred.columns.get_level_values(2).unique():
+                        labels = pred["MULTI", subprob, attr].values.astype(np.int).astype("U")
+                        y["MULTI", subprob, attr] = "0"
+                        y["MULTI", subprob, attr].values[np.ix_(rows)] = [''.join(row) for row in labels]
+            for subprob, dummy in self.dummies["REAL"].items():
+                rows = np.any(np.char.equal(problem_cols.values.astype("U"), subprob), axis=1)
+                if np.sum(rows):
+                    dummy = self.dummies["REAL"][subprob]
+                    X_real = X_timeseries if self.is_timeseries["REAL"] else X
+                    pred = pandas.DataFrame(
+                        self.machines_real[subprob].predict(X_real[np.ix_(rows)]), columns=dummy.columns
+                    )
+                    for attr in pred.columns.get_level_values(2).unique():
+                        y["REAL", subprob, attr] = 0
+                        y["REAL", subprob, attr].values[np.ix_(rows)] = pred["REAL", subprob, attr].values
 
         df = labeled_data.copy()
         df.pred = y
