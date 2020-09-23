@@ -74,7 +74,6 @@ class BulletinMachine:
         if self.fitted:
             raise AlreadyFittedError()
         self.fitted = True
-        labeled_data = labeled_data.normalize()
         y = labeled_data.label
         self.y_columns = y.columns
         self.dtypes = y.dtypes.to_dict()
@@ -180,8 +179,7 @@ class BulletinMachine:
         if not self.fitted:
             raise NotFittedError()
 
-        data = labeled_data.normalize()
-
+        data = labeled_data
         X = data.data.values
         X_timeseries = data.to_timeseries()[0]
         y = pandas.DataFrame(index=data.data.index, columns=self.y_columns).fillna(0).astype(self.dtypes)
