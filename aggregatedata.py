@@ -39,7 +39,7 @@ __author__ = 'arwi'
 
 _pwl = re.compile("(DH|SH|FC)")
 
-CSV_VERSION = "24"
+CSV_VERSION = "25"
 
 _NONE = ""
 
@@ -123,13 +123,30 @@ AVALANCHE_PROBLEM = {
     "dist": ("aval_distribution_id", lambda x: x),
     "lev_max": ("exposed_height_1", lambda x: x),
     "lev_min": ("exposed_height_2", lambda x: x),
+    "cause_new-snow": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'new-snow')),
+    "cause_hoar": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'cause_hoar')),
+    "cause_facet": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'cause_facet')),
+    "cause_crust": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'cause_crust')),
+    "cause_snowdrift": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'cause_snowdrift')),
+    "cause_ground-facet": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'cause_ground-facet')),
+    "cause_crust-above-facet": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'cause_crust-above-facet')),
+    "cause_crust-below-facet": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'cause_crust-below-facet')),
+    "cause_ground-water": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'cause_ground-water')),
+    "cause_water-layers": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'cause_water-layers')),
+    "cause_loose": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'cause_loose')),
+    "lev_fill_1": ("exposed_height_fill", lambda x: float(x == 1)),
+    "lev_fill_2": ("exposed_height_fill", lambda x: float(x == 2)),
+    "lev_fill_3": ("exposed_height_fill", lambda x: float(x == 3)),
+    "lev_fill_4": ("exposed_height_fill", lambda x: float(x == 4)),
+    "aspect_N": ("valid_expositions", lambda x: float(x[0])),
+    "aspect_NE": ("valid_expositions", lambda x: float(x[1])),
+    "aspect_E": ("valid_expositions", lambda x: float(x[2])),
+    "aspect_SE": ("valid_expositions", lambda x: float(x[3])),
+    "aspect_S": ("valid_expositions", lambda x: float(x[4])),
+    "aspect_SW": ("valid_expositions", lambda x: float(x[5])),
+    "aspect_W": ("valid_expositions", lambda x: float(x[6])),
+    "aspect_NW": ("valid_expositions", lambda x: float(x[7])),
 }
-for cause in CAUSES.values():
-    AVALANCHE_PROBLEM[f"cause_{cause}"] = ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == cause))
-for n in range(1, 5):
-    AVALANCHE_PROBLEM[f"lev_fill{n}"] = ("exposed_height_fill", lambda x: float(x == n))
-for n in range(0, 8):
-    AVALANCHE_PROBLEM[f"aspect_{DIRECTIONS[n]}"] = ("valid_expositions", lambda x: float(x[n]))
 
 # Same as AVALANCHE_PROBLEM, but destined for the label table
 AVALANCHE_PROBLEM_LABEL = {
@@ -154,15 +171,31 @@ WEATHER_VARSOM = {
     "temp_max": ("temperature_max", lambda x: x),
     "temp_lev": ("temperature_elevation", lambda x: x),
     "temp_freeze_lev": ("freezing_level", lambda x: x),
+    "wind_dir_N": ("wind_direction", lambda x: x == "N"),
+    "wind_dir_NE": ("wind_direction", lambda x: x == "NE"),
+    "wind_dir_E": ("wind_direction", lambda x: x == "E"),
+    "wind_dir_SE": ("wind_direction", lambda x: x == "SE"),
+    "wind_dir_S": ("wind_direction", lambda x: x == "S"),
+    "wind_dir_SW": ("wind_direction", lambda x: x == "SW"),
+    "wind_dir_W": ("wind_direction", lambda x: x == "W"),
+    "wind_dir_NW": ("wind_direction", lambda x: x == "NW"),
+    "wind_chg_dir_N": ("change_wind_direction", lambda x: x == "N"),
+    "wind_chg_dir_NE": ("change_wind_direction", lambda x: x == "NE"),
+    "wind_chg_dir_E": ("change_wind_direction", lambda x: x == "E"),
+    "wind_chg_dir_SE": ("change_wind_direction", lambda x: x == "SE"),
+    "wind_chg_dir_S": ("change_wind_direction", lambda x: x == "S"),
+    "wind_chg_dir_SW": ("change_wind_direction", lambda x: x == "SW"),
+    "wind_chg_dir_W": ("change_wind_direction", lambda x: x == "W"),
+    "wind_chg_dir_NW": ("change_wind_direction", lambda x: x == "NW"),
+    "wind_chg_start_0": ("change_hour_of_day_start", lambda x: x == 0),
+    "wind_chg_start_6": ("change_hour_of_day_start", lambda x: x == 6),
+    "wind_chg_start_12": ("change_hour_of_day_start", lambda x: x == 12),
+    "wind_chg_start_18": ("change_hour_of_day_start", lambda x: x == 18),
+    "temp_fl_start_0": ("fl_hour_of_day_start", lambda x: x == 0),
+    "temp_fl_start_6": ("fl_hour_of_day_start", lambda x: x == 6),
+    "temp_fl_start_12": ("fl_hour_of_day_start", lambda x: x == 12),
+    "temp_fl_start_18": ("fl_hour_of_day_start", lambda x: x == 18),
 }
-for wind_dir in DIRECTIONS:
-    WEATHER_VARSOM[f"wind_dir_{wind_dir}"] = ("wind_direction", lambda x: x == wind_dir)
-for wind_dir in DIRECTIONS:
-    WEATHER_VARSOM[f"wind_chg_dir_{wind_dir}"] = ("change_wind_direction", lambda x: x == wind_dir)
-for h in [0, 6, 12, 18]:
-    WEATHER_VARSOM[f"wind_chg_start_{h}"] = ("change_hour_of_day_start", lambda x: x == h)
-for h in [0, 6, 12, 18]:
-    WEATHER_VARSOM[f"temp_fl_start_{h}"] = ("fl_hour_of_day_start", lambda x: x == h)
 
 WEATHER_API = {
     "precip_most_exposed": ("Precipitation_MostExposed_Median", lambda x: x),
@@ -172,11 +205,19 @@ WEATHER_API = {
     "temp_max": ("MaxTemperature", lambda x: x),
     "temp_lev": ("TemperatureElevation", lambda x: x),
     "temp_freeze_lev": ("FreezingLevelAltitude", lambda x: x),
+    "wind_dir_N": ("WindDirection", lambda x: x == "N"),
+    "wind_dir_NE": ("WindDirection", lambda x: x == "NE"),
+    "wind_dir_E": ("WindDirection", lambda x: x == "E"),
+    "wind_dir_SE": ("WindDirection", lambda x: x == "SE"),
+    "wind_dir_S": ("WindDirection", lambda x: x == "S"),
+    "wind_dir_SW": ("WindDirection", lambda x: x == "SW"),
+    "wind_dir_W": ("WindDirection", lambda x: x == "W"),
+    "wind_dir_NW": ("WindDirection", lambda x: x == "NW"),
+    "temp_fl_start_0": ("FreezingLevelTime", lambda x: _round_hours(x) == 0),
+    "temp_fl_start_6": ("FreezingLevelTime", lambda x: _round_hours(x) == 6),
+    "temp_fl_start_12": ("FreezingLevelTime", lambda x: _round_hours(x) == 12),
+    "temp_fl_start_18": ("FreezingLevelTime", lambda x: _round_hours(x) == 18),
 }
-for h in [0, 6, 12, 18]:
-    WEATHER_API[f"temp_fl_start_{h}"] = ("FreezingLevelTime", lambda x: _round_hours(x) == h)
-for wind_dir in DIRECTIONS:
-    WEATHER_API[f"wind_dir_{wind_dir}"] = ("WindDirection", lambda x: x == wind_dir)
 
 REG_ENG = {
     "Faretegn": "dangersign",
