@@ -22,7 +22,7 @@ def regressor_creator(indata, outdata):
     return MultiTaskElasticNet()
 
 
-model_prefix = 'dt_no_varsom'
+model_prefix = 'dt_no_varsom_md7'
 days = 7
 regobs_types = list(REG_ENG.keys())
 labeled_data = None

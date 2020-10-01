@@ -16,16 +16,24 @@ import requests
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import StratifiedKFold, KFold
 
+from pathlib import Path
 
 old_dir = os.getcwd()
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, "./varsomdata")
+old_dir = Path.cwd()
+
+# old_dir = os.getcwd()
+proj_dir = Path(__file__).parent.absolute()
+# os.chdir(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, str(proj_dir / "varsomdata"))
+# sys.path.insert(0, "./varsomdata")
+# print(os.getcwd(), sys.path)
 import setenvironment as se
 from varsomdata import getforecastapi as gf
 from varsomdata import getvarsompickles as gvp
 from varsomdata import getmisc as gm
 os.chdir(old_dir)
-
+# os.chdir(old_dir)
 
 __author__ = 'arwi'
 

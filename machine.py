@@ -6,11 +6,11 @@ import pandas
 import dill
 import tensorflow.keras.models as keras
 
-old_dir = os.getcwd()
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, "./varsomdata")
+# old_dir = os.getcwd()
+# os.chdir(os.path.dirname(os.path.abspath(__file__)))
+# sys.path.insert(0, "./varsomdata")
 import setenvironment as se
-os.chdir(old_dir)
+# os.chdir(old_dir)
 
 __author__ = 'arwi'
 
