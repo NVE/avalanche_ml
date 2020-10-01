@@ -62,7 +62,7 @@ class BulletinMachine:
         self.fitted = False
         self.is_timeseries = {_NONE: False, "CLASS": False, "MULTI": False, "REAL": False}
 
-    def fit(self, labeled_data, epochs, verbose=0):
+    def fit(self, labeled_data, epochs=1, verbose=0):
         """Fits models to the supplied LabeledData.
 
         :param labeled_data: LabeledData: Dataset that the models should be fit after.
