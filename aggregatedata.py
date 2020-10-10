@@ -702,6 +702,8 @@ class LabeledData:
         except KeyError: pass
         try: self.label['MULTI'] = self.label['MULTI'].replace(0, "0").values
         except KeyError: pass
+        try: self.label['REAL'] = self.label['REAL'].astype(np.float)
+        except KeyError: pass
         self.pred = label.copy()
         for col in self.pred.columns:
             self.pred[col].values[:] = 0
@@ -788,26 +790,29 @@ class LabeledData:
             try:
                 prec = true_pos / np.sum(pred, axis=0)
             except FloatingPointError:
-                prec = pandas.Series(index=pred.columns).fillna(0)
+                prec = pandas.Series(index=pred.columns)
             try:
                 recall = true_pos / np.sum(truth, axis=0)
             except FloatingPointError:
-                recall = pandas.Series(index=pred.columns).fillna(0)
+                recall = pandas.Series(index=pred.columns)
             try:
                 f1 = 2 * prec * recall / (prec + recall)
             except FloatingPointError:
-                f1 = pandas.Series(index=pred.columns).fillna(0)
+                f1 = pandas.Series(index=pred.columns)
             new_df = pandas.DataFrame(index=truth.columns, columns=['f1', 'precision', 'recall', 'rmse'])
             new_df.iloc[:, :3] = np.array([f1, prec, recall]).transpose()
             df = new_df if df is None else pandas.concat([df, new_df], sort=True)
+            df[['f1', 'precision', 'recall']] = df[['f1', 'precision', 'recall']].fillna(0)
 
         for subprob in dummies["label"]["REAL"].keys():
             truth = dummies["label"]["REAL"][subprob].values
             pred = dummies["pred"]["REAL"][subprob].values
             try:
-                rmse = (np.sqrt(np.sum(np.square(pred - truth), axis=0)) / truth.shape[0])
-            except:
-                rmse = 0
+                ntruth = (truth - truth.min(axis=0)) / (truth.max(axis=0) - truth.min(axis=0))
+                npred = (pred - pred.min(axis=0)) / (pred.max(axis=0) - pred.min(axis=0))
+                rmse = (np.sqrt(np.sum(np.square(npred - ntruth), axis=0)) / ntruth.shape[0])
+            except Exception:
+                rmse = np.nan
             new_df = pandas.DataFrame({"rmse": rmse}, index=dummies["label"]["REAL"][subprob].columns)
             df = new_df if df is None else pandas.concat([df, new_df], sort=True)
         np.seterr(**old_settings)
@@ -843,21 +848,13 @@ class LabeledData:
             dummies[name] = {"CLASS": {}, "MULTI": {}, "REAL": {}}
             for subprob in df.loc[:, ["CLASS"]].columns.get_level_values(1).unique():
                 try:
+                    sub_df = self.label["CLASS", subprob]
+                    try: col = pandas.get_dummies(sub_df, prefix_sep=':').columns
+                    except ValueError: col = []
+
                     if name == 'label':
-                        if subprob == _NONE:
-                            sub_df = df["CLASS", subprob]
-                        else:
-                            idx = 0
-                            for n in [1, 2, 3]:
-                                try:
-                                    idx += df["CLASS"][_NONE][f"problem_{n}"].eq(subprob).astype(np.int)
-                                except KeyError:
-                                    pass
-                            sub_df = df["CLASS"][subprob].loc[idx > 0]
-                        try: col = pandas.get_dummies(sub_df, prefix_sep=':').columns
-                        except ValueError: col = []
                         dum = pandas.DataFrame(pandas.get_dummies(sub_df, prefix_sep=':'), columns=col)
-                        dummies[name]["CLASS"][subprob] = dum
+                        dummies[name]["CLASS"][subprob] = dum.fillna(0)
 
                         columns = dummies["label"]["CLASS"][subprob].columns.values.astype("U")
                         idx = pandas.MultiIndex.from_tuples(
@@ -867,9 +864,7 @@ class LabeledData:
                         dummies["label"]["CLASS"][subprob].columns = idx
                     else:
                         dum = pandas.DataFrame(pandas.get_dummies(df["CLASS", subprob], prefix_sep=':'), columns=col)
-
-                        dummies[name]["CLASS"][subprob] = dum
-
+                        dummies[name]["CLASS"][subprob] = dum.fillna(0)
                         dummies["pred"]["CLASS"][subprob].columns = dummies["label"]["CLASS"][subprob].columns
                 except KeyError:
                     pass
