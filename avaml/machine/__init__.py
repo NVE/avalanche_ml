@@ -37,6 +37,9 @@ class BulletinMachine:
         """
         raise FeatureImportanceMissingError("Machine does not use feature importances!")
 
+    def dt_pdf(self, file_name):
+        raise NotImplementedError("Method not implemented!")
+
     def dump(self, identifier):
         raise NotImplementedError("Method not implemented!")
 

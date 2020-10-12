@@ -10,4 +10,4 @@ or
     git clone --recurse-submodules https://github.com/NVE/avalanche_ml.git
 
 ## Example program
-See [`demo_sk-classifier.py`](demo_sk-classifier.py)
+See [`demo_sk-classifier.py`](demo_sk-classifier.py) and [`demo_sk-cluster.py`](demo_sk-cluster.py).
