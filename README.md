@@ -9,10 +9,5 @@ or
 
     git clone --recurse-submodules https://github.com/NVE/avalanche_ml.git
 
-## Documentation
-
-* [`aggregatedata.py`](docs/aggregatedata.md)
-* [`machine.py`](docs/machine.md)
-
 ## Example program
-See [`main.py`](main.py)
+See [`demo_sk-classifier.py`](demo_sk-classifier.py) and [`demo_sk-cluster.py`](demo_sk-cluster.py).
