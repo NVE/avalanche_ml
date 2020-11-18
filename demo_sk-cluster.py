@@ -3,7 +3,6 @@ from sklearn.cluster import AgglomerativeClustering
 from avaml.aggregatedata import ForecastDataset, LabeledData, CsvMissingError
 from sklearn.tree import DecisionTreeClassifier
 
-from avaml.machine.sk_classifier import SKClassifierMachine
 from avaml.machine.sk_clustered import SKClusteringMachine
 
 model_prefix = ''

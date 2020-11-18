@@ -5,6 +5,7 @@ import pandas as pd
 import dill
 
 from avaml import _NONE, setenvironment as se
+from avaml.aggregatedata import DatasetMissingLabel
 from avaml.machine import BulletinMachine, AlreadyFittedError, NotFittedError
 
 __author__ = 'arwi'
@@ -57,6 +58,9 @@ class SKClassifierMachine(BulletinMachine):
 
         :param labeled_data: LabeledData: Dataset that the models should be fit after.
         """
+        if labeled_data.label is None:
+            raise DatasetMissingLabel()
+
         if self.fitted:
             raise AlreadyFittedError()
         self.fitted = True

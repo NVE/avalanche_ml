@@ -171,6 +171,7 @@ WEATHER_API = {
     "precip_most_exposed": ("Precipitation_MostExposed_Median", lambda x: x),
     "precip": ("Precipitation_overall_ThirdQuartile", lambda x: x),
     "wind_speed": ("WindClassification", lambda x: WIND_SPEEDS.get(x)),
+    "wind_change_speed": ("change_wind_speed", lambda x: 0),
     "temp_min": ("MinTemperature", lambda x: x),
     "temp_max": ("MaxTemperature", lambda x: x),
     "temp_lev": ("TemperatureElevation", lambda x: x),
@@ -183,6 +184,18 @@ WEATHER_API = {
     "wind_dir_SW": ("WindDirection", lambda x: x == "SW"),
     "wind_dir_W": ("WindDirection", lambda x: x == "W"),
     "wind_dir_NW": ("WindDirection", lambda x: x == "NW"),
+    "wind_chg_dir_N": ("WindDirection", lambda x: False),
+    "wind_chg_dir_NE": ("WindDirection", lambda x: False),
+    "wind_chg_dir_E": ("WindDirection", lambda x: False),
+    "wind_chg_dir_SE": ("WindDirection", lambda x: False),
+    "wind_chg_dir_S": ("WindDirection", lambda x: False),
+    "wind_chg_dir_SW": ("WindDirection", lambda x: False),
+    "wind_chg_dir_W": ("WindDirection", lambda x: False),
+    "wind_chg_dir_NW": ("WindDirection", lambda x: False),
+    "wind_chg_start_0": ("WindDirection", lambda x: False),
+    "wind_chg_start_6": ("WindDirection", lambda x: False),
+    "wind_chg_start_12": ("WindDirection", lambda x: False),
+    "wind_chg_start_18": ("WindDirection", lambda x: False),
     "temp_fl_start_0": ("FreezingLevelTime", lambda x: _round_hours(x) == 0),
     "temp_fl_start_6": ("FreezingLevelTime", lambda x: _round_hours(x) == 6),
     "temp_fl_start_12": ("FreezingLevelTime", lambda x: _round_hours(x) == 12),
@@ -390,8 +403,30 @@ REGOBS_SCALARS = {
 }
 
 
-def _get_varsom_obs(year, max_file_age=23):
-    aw = gvp.get_all_forecasts(year=year)
+def _get_raw_varsom(year, date, days, max_file_age=23):
+    if date:
+        season = gm.get_season_from_date(date)
+        regions = gm.get_forecast_regions(year=season, get_b_regions=True)
+        aw = []
+        from_date = date - dt.timedelta(days=days + 1)
+        to_date = date
+        single_warning = gf.get_avalanche_warnings(regions, from_date, to_date)
+        for sw in single_warning:
+            if sw.danger_level > 0:
+                aw.append(sw)
+    else:
+        aw = gvp.get_all_forecasts(year=year, max_file_age=max_file_age)
+    return aw
+
+
+def _get_varsom_obs(year, date=None, days=None, max_file_age=23):
+    """
+    Download data from Varsom
+    :param year: String representation of season. None if a specific date should be fetched.
+    :param date: datetime.date. None if a whole season should be fetched.
+    :param days: How many days to fetch before date. This will be max for .label()'s days parameter.
+    """
+    aw = _get_raw_varsom(year, date, days, max_file_age=max_file_age)
     forecasts = {}
     labels = {}
     for forecast in aw:
@@ -438,48 +473,62 @@ def _get_varsom_obs(year, max_file_age=23):
             labels[key][(forecast.date_valid.isoformat(), forecast.region_id)] = value
     return forecasts, labels
 
-def _get_weather_obs(year, max_file_age=23):
-    aw = gvp.get_all_forecasts(year=year)
+def _get_weather_obs(year, date=None, days=None, max_file_age=23):
+    """
+    Download data from the weather API:s
+    :param year: String representation of season. None if a specific date should be fetched.
+    :param max_file_age: Time to live for cache in hours.
+    :param date: datetime.date. None if a whole season should be fetched.
+    """
+    aw = _get_raw_varsom(year, date, days, max_file_age=max_file_age)
     file_name = f'{se.local_storage}weather_v{CSV_VERSION}_{year}.pickle'
     file_date_limit = dt.datetime.now() - dt.timedelta(hours=max_file_age)
     current_season = gm.get_season_from_date(dt.date.today() - dt.timedelta(30))
     get_new = True
 
-    try:
-        # Don't fetch new data if old is cached. If older season file doesn't exists we get out via an exception.
-        if dt.datetime.fromtimestamp(os.path.getmtime(file_name)) > file_date_limit or year != current_season:
-            get_new = False
-    except FileNotFoundError:
-        pass
+    if date:
+        from_date = date - dt.timedelta(days=days)
+        to_date = date + dt.timedelta(days=1)
+        get_new = True
+    else:
+        from_date, to_date = gm.get_dates_from_season(year)
+        to_date = to_date + dt.timedelta(days=1)
 
-    date, to_date = gm.get_dates_from_season(year)
+        try:
+            # Don't fetch new data if old is cached. If older season file doesn't exists we get out via an exception.
+            if dt.datetime.fromtimestamp(os.path.getmtime(file_name)) > file_date_limit or year != current_season:
+                get_new = False
+        except FileNotFoundError:
+            pass
 
     if get_new:
-        date = date.replace(day=1)
         futures_tuples = []
         weather_api_native = {}
         with futures.ThreadPoolExecutor(300) as executor:
-            while date < to_date:
-                if date.month in [7, 8, 9, 10]:
-                    date = date.replace(month=date.month+1)
-                    date = date.replace(day=1)
+            while from_date < to_date:
+                if from_date.month in [7, 8, 9, 10]:
+                    from_date = from_date.replace(day=1, month=from_date.month + 1)
                     continue
-                url = f'http://h-web03.nve.no/APSapi/TimeSeriesReader.svc/MountainWeather/-/{date.isoformat()}/no/true'
+                url = 'http://h-web03.nve.no/APSapi/TimeSeriesReader.svc/MountainWeather/-/{0}/no/true'.format(
+                    from_date.isoformat()
+                )
                 future = executor.submit(lambda: requests.get(url))
-                futures_tuples.append((date, 0, future))
-                date += dt.timedelta(days=1)
+                futures_tuples.append((from_date, 0, future))
+                from_date += dt.timedelta(days=1)
 
 
             while len(futures_tuples):
-                date, retries, future = futures_tuples.pop()
+                from_date, retries, future = futures_tuples.pop()
                 response = future.result()
                 if response.status_code != requests.codes.ok:
                     if retries < 5:
-                        url = f'http://h-web03.nve.no/APSapi/TimeSeriesReader.svc/MountainWeather/-/{date.isoformat()}/no/true'
+                        url = 'http://h-web03.nve.no/APSapi/TimeSeriesReader.svc/MountainWeather/-/{0}/no/true'.format(
+                            from_date.isoformat()
+                        )
                         future = executor.submit(lambda: requests.get(url))
-                        futures_tuples.insert(0, (date, retries + 1, future))
+                        futures_tuples.insert(0, (from_date, retries + 1, future))
                     else:
-                        print(f"Failed to fetch weather for {date.isoformat()}, skipping", file=sys.stderr)
+                        print(f"Failed to fetch weather for {from_date.isoformat()}, skipping", file=sys.stderr)
                     continue
 
                 json = response.json()
@@ -491,12 +540,13 @@ def _get_weather_obs(year, max_file_age=23):
                         weather_api_native[obs['Attribute']] = {}
                     region = int(float(obs['RegionId']))
                     try:
-                        weather_api_native[obs['Attribute']][(date.isoformat(), region)] = float(obs['Value'])
+                        weather_api_native[obs['Attribute']][(from_date.isoformat(), region)] = float(obs['Value'])
                     except ValueError:
-                        weather_api_native[obs['Attribute']][(date.isoformat(), region)] = obs['Value']
+                        weather_api_native[obs['Attribute']][(from_date.isoformat(), region)] = obs['Value']
 
-        with open(file_name, 'wb') as handle:
-            pickle.dump(weather_api_native, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        if not date:
+            with open(file_name, 'wb') as handle:
+                pickle.dump(weather_api_native, handle, protocol=pickle.HIGHEST_PROTOCOL)
     else:
         try:
             with open(file_name, 'rb') as handle:
@@ -523,7 +573,8 @@ def _get_weather_obs(year, max_file_age=23):
     return merge(weather_varsom, weather_api)
 
 
-def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
+def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23):
+    regions = gm.get_forecast_regions(year=year, get_b_regions=True)
     observations = {}
 
     if len(requested_types) == 0:
@@ -539,10 +590,16 @@ def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
         # Don't fetch new data if old is cached. If older season file doesn't exists we get out via an exception.
         if dt.datetime.fromtimestamp(os.path.getmtime(file_name)) > file_date_limit or year != current_season:
             get_new = False
+        if date:
+            get_new = True
     except FileNotFoundError:
         pass
 
-    from_date, to_date = gm.get_dates_from_season(year=year)
+    if date:
+        from_date = date - dt.timedelta(days=days)
+        to_date = date
+    else:
+        from_date, to_date = gm.get_dates_from_season(year=year)
 
     req_set = set(requested_types)
     # Make sure all requested elements from RegObs actually have the information we need specified
@@ -590,85 +647,86 @@ def _get_regobs_obs(regions, year, requested_types, max_file_age=23):
                     continue
                 results = results + raw_obses["Results"]
 
-        for raw_obs in results:
-            for reg in raw_obs["Registrations"]:
-                obs_type = reg["RegistrationName"]
-                if obs_type not in requested_types:
-                    continue
-                # Ignore snow profiles of the old format
-                if obs_type == "Snøprofil" and "StratProfile" not in reg["FullObject"]:
-                    continue
-
-                obs = {
-                    "competence": raw_obs["CompetenceLevelTid"]
-                }
-                try:
-                    for attr, categories in REGOBS_CLASSES[obs_type].items():
-                        value = reg["FullObject"][attr]
-                        for cat_id, cat_name in categories.items():
-                            obs[cat_name] = 1 if cat_id == value else 0
-                except KeyError:
-                    pass
-                try:
-                    for regobs_attr, conv in REGOBS_SCALARS[obs_type].values():
-                        obs[regobs_attr] = reg["FullObject"][regobs_attr]
-                except KeyError:
-                    pass
-
-                date = dt.datetime.fromisoformat(raw_obs["DtObsTime"]).date()
-                key = (date.isoformat(), raw_obs["ForecastRegionTid"])
-                if key not in observations:
-                    observations[key] = {}
-                if obs_type not in observations[key]:
-                    observations[key][obs_type] = []
-                observations[key][obs_type].append(obs)
-
-        # We want the most competent observations first
-        for date_region in observations.values():
-            for reg_type in date_region.values():
-                reg_type.sort(key=lambda x: x['competence'], reverse=True)
-
-        df_dict = {}
-        for key, observation in observations.items():
-            # Use 5 most competent observations, and list both categories as well as scalars
-            for obs_idx in range(0, 5):
-                # One type of observation (test, danger signs etc.) at a time
-                for regobs_type in requested_types:
-                    obses = observation[regobs_type] if regobs_type in observation else []
-                    # Go through each requested class attribute from the specified observation type
-                    for attr, cat in REGOBS_CLASSES[regobs_type].items():
-                        # We handle categories using 1-hot, so we step through each category
-                        for cat_name in cat.values():
-                            attr_name = f"regobs_{REG_ENG[regobs_type]}_{_camel_to_snake(attr)}_{cat_name}_{obs_idx}"
-                            if attr_name not in df_dict:
-                                df_dict[attr_name] = {}
-                            df_dict[attr_name][key] = obses[obs_idx][cat_name] if len(obses) > obs_idx else 0
-                    # Go through all requested scalars
-                    for attr, (regobs_attr, conv) in REGOBS_SCALARS[regobs_type].items():
-                        attr_name = f"regobs_{REG_ENG[regobs_type]}_{_camel_to_snake(attr)}_{obs_idx}"
-                        if attr_name not in df_dict:
-                            df_dict[attr_name] = {}
-                        try:
-                            df_dict[attr_name][key] = conv(obses[obs_idx][regobs_attr]) if len(obses) > obs_idx else 0
-                        except TypeError:
-                            df_dict[attr_name][key] = 0
-
-            if "accuracy" not in df_dict:
-                df_dict["accuracy"] = {}
-            df_dict['accuracy'][key] = sum(map(
-                lambda x: {0: 0, 1: 1, 2: -1, 3: -1}[x['ForecastCorrectTID']],
-                observation['Skredfarevurdering']
-            )) if 'Skredfarevurdering' in observation else 0
-
-        with open(file_name, 'wb') as handle:
-            pickle.dump(df_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        if not date:
+            with open(file_name, 'wb') as handle:
+                pickle.dump(results, handle, protocol=pickle.HIGHEST_PROTOCOL)
     else:
         try:
             with open(file_name, 'rb') as handle:
-                df_dict = pickle.load(handle)
+               results = pickle.load(handle)
         except:
             os.remove(file_name)
             return _get_regobs_obs(regions, year, requested_types, max_file_age)
+
+    for raw_obs in results:
+        for reg in raw_obs["Registrations"]:
+            obs_type = reg["RegistrationName"]
+            if obs_type not in requested_types:
+                continue
+            # Ignore snow profiles of the old format
+            if obs_type == "Snøprofil" and "StratProfile" not in reg["FullObject"]:
+                continue
+
+            obs = {
+                "competence": raw_obs["CompetenceLevelTid"]
+            }
+            try:
+                for attr, categories in REGOBS_CLASSES[obs_type].items():
+                    value = reg["FullObject"][attr]
+                    for cat_id, cat_name in categories.items():
+                        obs[cat_name] = 1 if cat_id == value else 0
+            except KeyError:
+                pass
+            try:
+                for regobs_attr, conv in REGOBS_SCALARS[obs_type].values():
+                    obs[regobs_attr] = reg["FullObject"][regobs_attr]
+            except KeyError:
+                pass
+
+            date = dt.datetime.fromisoformat(raw_obs["DtObsTime"]).date()
+            key = (date.isoformat(), raw_obs["ForecastRegionTid"])
+            if key not in observations:
+                observations[key] = {}
+            if obs_type not in observations[key]:
+                observations[key][obs_type] = []
+            observations[key][obs_type].append(obs)
+
+    # We want the most competent observations first
+    for date_region in observations.values():
+        for reg_type in date_region.values():
+            reg_type.sort(key=lambda x: x['competence'], reverse=True)
+
+    df_dict = {}
+    for key, observation in observations.items():
+        # Use 5 most competent observations, and list both categories as well as scalars
+        for obs_idx in range(0, 5):
+            # One type of observation (test, danger signs etc.) at a time
+            for regobs_type in requested_types:
+                obses = observation[regobs_type] if regobs_type in observation else []
+                # Go through each requested class attribute from the specified observation type
+                for attr, cat in REGOBS_CLASSES[regobs_type].items():
+                    # We handle categories using 1-hot, so we step through each category
+                    for cat_name in cat.values():
+                        attr_name = f"regobs_{REG_ENG[regobs_type]}_{_camel_to_snake(attr)}_{cat_name}_{obs_idx}"
+                        if attr_name not in df_dict:
+                            df_dict[attr_name] = {}
+                        df_dict[attr_name][key] = obses[obs_idx][cat_name] if len(obses) > obs_idx else 0
+                # Go through all requested scalars
+                for attr, (regobs_attr, conv) in REGOBS_SCALARS[regobs_type].items():
+                    attr_name = f"regobs_{REG_ENG[regobs_type]}_{_camel_to_snake(attr)}_{obs_idx}"
+                    if attr_name not in df_dict:
+                        df_dict[attr_name] = {}
+                    try:
+                        df_dict[attr_name][key] = conv(obses[obs_idx][regobs_attr]) if len(obses) > obs_idx else 0
+                    except TypeError:
+                        df_dict[attr_name][key] = 0
+
+        if "accuracy" not in df_dict:
+            df_dict["accuracy"] = {}
+        df_dict['accuracy'][key] = sum(map(
+            lambda x: {0: 0, 1: 1, 2: -1, 3: -1}[x['ForecastCorrectTID']],
+            observation['Skredfarevurdering']
+        )) if 'Skredfarevurdering' in observation else 0
 
     return df_dict
 

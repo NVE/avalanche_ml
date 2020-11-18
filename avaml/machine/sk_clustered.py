@@ -1,13 +1,13 @@
 import os
 
 import dill
-from sklearn.cluster import AgglomerativeClustering
 import numpy as np
 import pandas as pd
 from sklearn.metrics import pairwise_distances
 from sklearn.tree import export_graphviz
 
 from avaml import setenvironment as se, _NONE
+from avaml.aggregatedata import DatasetMissingLabel
 from avaml.machine import BulletinMachine, AlreadyFittedError
 
 __author__ = 'arwi'
@@ -38,6 +38,9 @@ class SKClusteringMachine(BulletinMachine):
 
         :param labeled_data: LabeledData: Dataset that the models should be fit after.
         """
+        if labeled_data.label is None:
+            raise DatasetMissingLabel()
+
         if self.fitted:
             raise AlreadyFittedError()
         self.fitted = True
@@ -126,11 +129,12 @@ class SKClusteringMachine(BulletinMachine):
 
         for dlevel in range(1, 5):
             dlevel_rows = y["CLASS", "", "danger_level"] == str(dlevel)
-            X = labeled_data.data.loc[dlevel_rows, self.cols]
+            if dlevel_rows.sum():
+                X = labeled_data.data.loc[dlevel_rows, self.cols]
 
-            distances = pairwise_distances(self.cluster_features[dlevel], X)
-            c_ids = self.cluster_ids[dlevel][np.argmin(distances, axis=0)]
-            y.loc[dlevel_rows] = self.mode[dlevel].values[c_ids]
+                distances = pairwise_distances(self.cluster_features[dlevel], X)
+                c_ids = self.cluster_ids[dlevel][np.argmin(distances, axis=0)]
+                y.loc[dlevel_rows] = self.mode[dlevel].values[c_ids]
 
         ld = labeled_data.copy()
         ld.pred = y
