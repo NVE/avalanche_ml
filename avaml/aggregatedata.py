@@ -12,10 +12,8 @@ from sklearn.model_selection import StratifiedKFold, KFold
 
 from avaml import Error, varsomdata, setenvironment as se, _NONE, CSV_VERSION, REGIONS, merge
 from avaml.download import _get_varsom_obs, _get_weather_obs, _get_regobs_obs, REG_ENG
-
 from varsomdata import getforecastapi as gf
 from varsomdata import getmisc as gm
-
 
 __author__ = 'arwi'
 
@@ -149,27 +147,56 @@ COMPETENCE = [0, 110, 115, 120, 130, 150]
 
 class ForecastDataset:
 
-    def __init__(self, regobs_types, seasons=('2017-18', '2018-19', '2019-20')):
+    def __init__(self, regobs_types, seasons=('2017-18', '2018-19', '2019-20'), max_file_age=23):
         """
         Object contains aggregated data used to generate labeled datasets.
         :param regobs_types: Tuple/list of string names for RegObs observation types to fetch.
         :param seasons: Tuple/list of string representations of avalanche seasons to fetch.
         """
+        self.seasons = sorted(list(set(seasons)))
+        self.date = None
         self.regobs_types = regobs_types
         self.weather = {}
         self.regobs = {}
         self.varsom = {}
         self.labels = {}
+        self.use_label = True
 
         for season in seasons:
-            regions = gm.get_forecast_regions(year=season, get_b_regions=True)
-            varsom, labels = _get_varsom_obs(year=season)
+            varsom, labels = _get_varsom_obs(year=season, max_file_age=max_file_age)
             self.varsom = merge(self.varsom, varsom)
             self.labels = merge(self.labels, labels)
-            regobs = _get_regobs_obs(regions, season, regobs_types)
+            regobs = _get_regobs_obs(season, regobs_types, max_file_age=max_file_age)
             self.regobs = merge(self.regobs, regobs)
-            weather = _get_weather_obs(season)
+            weather = _get_weather_obs(season, max_file_age=max_file_age)
             self.weather = merge(self.weather, weather)
+
+    @staticmethod
+    def date(regobs_types, date: dt.date, days, use_label=True):
+        """
+        Create a dataset containing just a given day's data.
+        :param regobs_types: Tuple/list of string names for RegObs observation types to fetch.
+        :param date: Date to fetch and create dataset for.
+        :param days: How many days to fetch before date. This will be max for .label()'s days parameter.
+        """
+        self = ForecastDataset(regobs_types, [])
+        self.date = date
+        self.use_label = use_label
+
+        self.regobs = _get_regobs_obs(None, regobs_types, date=date, days=days)
+        self.varsom, labels = _get_varsom_obs(None, date=date, days=days-1 if days > 0 else 1)
+        self.weather = _get_weather_obs(None, date=date, days=days-2 if days > 2 else 1)
+
+        self.labels = {}
+        for label_keys, label in labels.items():
+            if label_keys not in self.labels:
+                self.labels[label_keys] = {}
+            for (label_date, label_region), label_data in label.items():
+                if label_date == date.isoformat():
+                    subkey = (label_date, label_region)
+                    self.labels[label_keys][subkey] = label_data
+
+        return self
 
     def label(self, days, with_varsom=True):
         """Creates a LabeledData containing relevant label and features formatted either in a flat structure or as
@@ -178,7 +205,7 @@ class ForecastDataset:
         :param days:            How far back in time values should data be included.
                                 If 0, only weather data for the forecast day is evaluated.
                                 If 1, day 0 is used for weather, 1 for Varsom.
-                                If 2, day 0 is used for weather, 1 for Varsom.
+                                If 2, day 0 is used for weather, 1 for Varsom, 2 for RegObs.
                                 If 3, days 0-1 is used for weather, 1-2 for Varsom, 2-3 for RegObs.
                                 If 5, days 0-3 is used for weather, 1-4 for Varsom, 2-5 for RegObs.
                                 The reason for this is to make sure that each kind of data contain
@@ -200,7 +227,17 @@ class ForecastDataset:
         varsom_index = pd.DataFrame(self.varsom).index
         weather_index = pd.DataFrame(self.weather).index
 
-        for monotonic_idx, entry_idx in enumerate(df_label.index):
+        if len(df_label.index) == 0 and self.use_label:
+            raise NoBulletinWithinRangeError()
+
+        if self.date and not self.use_label:
+            season = gm.get_season_from_date(self.date)
+            regions = gm.get_forecast_regions(year=season, get_b_regions=True)
+            date_region = [(self.date.isoformat(), region) for region in regions]
+        else:
+            date_region = df_label.index
+
+        for monotonic_idx, entry_idx in enumerate(date_region):
             date, region_id = dt.date.fromisoformat(entry_idx[0]), entry_idx[1]
 
             def prev_key(day_dist):
@@ -211,52 +248,56 @@ class ForecastDataset:
                 if with_varsom:
                     for n in range(1, days_v):
                         if prev_key(n) not in varsom_index:
-                            raise KeyError
+                            raise KeyError()
                 for n in range(0, days_w):
                     if prev_key(n) not in weather_index:
-                        raise KeyError
+                        raise KeyError()
+                add_row = True
                 # We don't check for RegObs as it is more of the good to have type of data
             except KeyError:
-                continue
+                add_row = False
 
-            row = {}
-            for region in REGIONS:
-                row[(f"region_id_{region}", 0)] = float(region == region_id)
+            if add_row:
+                row = {}
+                for region in REGIONS:
+                    row[(f"region_id_{region}", "0")] = float(region == region_id)
 
-            if with_varsom:
-                for column in self.varsom.keys():
-                    for n in range(1, days_v):
-                        row[(column, n)] = self.varsom[column][prev_key(n)]
-            for column in self.weather.keys():
-                for n in range(0, days_w):
-                    try:
-                        row[(column, n)] = self.weather[column][prev_key(n)]
-                    except KeyError:
-                        row[(column, n)] = 0
-            for column in self.regobs.keys():
-                for n in range(2, days_r):
-                    try:
-                        row[(column, n)] = self.regobs[column][prev_key(n)]
-                    except KeyError:
-                        row[(column, n)] = 0
-            try:
-                weight_sum = self.regobs['accuracy'][prev_key(0)]
-                if weight_sum < 0:
-                    row_weight[entry_idx] = 1 / 2
-                elif weight_sum == 0:
+                if with_varsom:
+                    for column in self.varsom.keys():
+                        for n in range(1, days_v):
+                            # We try/except an extra time since single dates may run without a forecast.
+                            row[(column, str(n))] = self.varsom[column][prev_key(n)]
+                for column in self.weather.keys():
+                    for n in range(0, days_w):
+                        try:
+                            row[(column, str(n))] = self.weather[column][prev_key(n)]
+                        except KeyError:
+                            row[(column, str(n))] = 0
+                for column in self.regobs.keys():
+                    for n in range(2, days_r):
+                        try:
+                            row[(column, str(n))] = self.regobs[column][prev_key(n)]
+                        except KeyError:
+                            row[(column, str(n))] = 0
+                try:
+                    weight_sum = self.regobs['accuracy'][prev_key(0)]
+                    if weight_sum < 0:
+                        row_weight[entry_idx] = 1 / 2
+                    elif weight_sum == 0:
+                        row_weight[entry_idx] = 1
+                    elif weight_sum > 0:
+                        row_weight[entry_idx] = 2
+                except KeyError:
                     row_weight[entry_idx] = 1
-                elif weight_sum > 0:
-                    row_weight[entry_idx] = 2
-            except KeyError:
-                row_weight[entry_idx] = 1
 
-            # Some restructuring to make DataFrame parse the dict correctly
-            for key in row.keys():
-                if key not in table:
-                    table[key] = {}
-                table[key][entry_idx] = row[key]
+                # Some restructuring to make DataFrame parse the dict correctly
+                for key in row.keys():
+                    if key not in table:
+                        table[key] = {}
+                    table[key][entry_idx] = row[key]
+
             # Build DataFrame iteratively to preserve system memory (floats in dicts are apparently expensive).
-            if (monotonic_idx > 0 and monotonic_idx % 1000 == 0) or monotonic_idx == len(df_label.index) - 1:
+            if (monotonic_idx > 0 and monotonic_idx % 1000 == 0) or monotonic_idx == len(date_region) - 1:
                 df_new = pd.DataFrame(table, dtype=np.float32).fillna(0)
                 df_weight_new = pd.Series(row_weight)
                 df = df_new if df is None else pd.concat([df, df_new])
@@ -264,21 +305,27 @@ class ForecastDataset:
                 table = {}
                 row_weight = {}
 
-        df_label = df_label.loc[df.index]
+        if df is None or len(df.index) == 0:
+            raise NoDataFoundError()
 
-        df_label.sort_index(axis=0, inplace=True)
-        df_label.sort_index(axis=1, inplace=True)
-        df.sort_index(axis=0, inplace=True)
-        df_weight.sort_index(axis=0, inplace=True)
+        if self.use_label:
+            df_label = df_label.loc[df.index]
 
-        return LabeledData(df, df_label, df_weight, days, self.regobs_types, with_varsom)
+            df_label.sort_index(axis=0, inplace=True)
+            df_label.sort_index(axis=1, inplace=True)
+            df.sort_index(axis=0, inplace=True)
+            df_weight.sort_index(axis=0, inplace=True)
+        else:
+            df_label = None
+
+        return LabeledData(df, df_label, df_weight, days, self.regobs_types, with_varsom, self.seasons)
 
 
 class LabeledData:
     is_normalized = False
     scaler = MinMaxScaler()
 
-    def __init__(self, data, label, row_weight, days, regobs_types, with_varsom):
+    def __init__(self, data, label, row_weight, days, regobs_types, with_varsom, seasons=False):
         """Holds labels and features.
 
         :param data:            A DataFrame containing the features of the dataset.
@@ -299,26 +346,32 @@ class LabeledData:
         """
         self.data = data
         self.row_weight = row_weight
-        self.label = label
-        self.label = self.label.replace(_NONE, 0)
-        self.label = self.label.replace(np.nan, 0)
-        try: self.label['CLASS', _NONE] = self.label['CLASS', _NONE].replace(0, _NONE).values
-        except KeyError: pass
-        try: self.label['MULTI'] = self.label['MULTI'].replace(0, "0").values
-        except KeyError: pass
-        try: self.label['REAL'] = self.label['REAL'].astype(np.float)
-        except KeyError: pass
-        self.pred = label.copy()
-        for col in self.pred.columns:
-            self.pred[col].values[:] = 0
-        try: self.pred['CLASS', _NONE] = _NONE
-        except KeyError: pass
-        try: self.pred['MULTI'] = "0"
-        except KeyError: pass
+        if label is not None:
+            self.label = label
+            self.label = self.label.replace(_NONE, 0)
+            self.label = self.label.replace(np.nan, 0)
+            try: self.label['CLASS', _NONE] = self.label['CLASS', _NONE].replace(0, _NONE).values
+            except KeyError: pass
+            try: self.label['MULTI'] = self.label['MULTI'].replace(0, "0").values
+            except KeyError: pass
+            try: self.label['REAL'] = self.label['REAL'].astype(np.float)
+            except KeyError: pass
+            self.pred = label.copy()
+            for col in self.pred.columns:
+                self.pred[col].values[:] = 0
+            try: self.pred['CLASS', _NONE] = _NONE
+            except KeyError: pass
+            try: self.pred['MULTI'] = "0"
+            except KeyError: pass
+        else:
+            self.label = None
+            self.pred = None
         self.days = days
         self.with_varsom = with_varsom
         self.regobs_types = regobs_types
         self.scaler.fit(self.data.values)
+        self.single = not seasons
+        self.seasons = sorted(list(set(seasons if seasons else [])))
 
     def normalize(self):
         """Normalize the data feature-wise using MinMax.
@@ -356,6 +409,8 @@ class LabeledData:
         :param shuffle: Bool: Whether rows should be shuffled before folding. Defaults to True.
         :return: Iterable<(LabeledData, LabeledData)>
         """
+        if self.label is None or self.pred is None:
+            raise DatasetMissingLabel()
         if stratify is None:
             kf = KFold(n_splits=k, shuffle=shuffle)
             split = kf.split(self.data)
@@ -382,6 +437,9 @@ class LabeledData:
 
         :return: Series with scores of all possible labels and values.
         """
+        if self.label is None or self.pred is None:
+            raise DatasetMissingLabel()
+
         dummies = self.to_dummies()
         old_settings = np.seterr(divide='raise', invalid='raise')
 
@@ -451,6 +509,9 @@ class LabeledData:
 
         :return: pd.DataFrame
         """
+        if self.label is None:
+            raise DatasetMissingLabel()
+
         dummies = {}
         for name, df in [('label', self.label), ('pred', self.pred)]:
             dummies_types = {}
@@ -528,28 +589,59 @@ class LabeledData:
             dummies[name] = pd.concat(dummies_types.values(), keys=dummies_types.keys(), axis=1)
         return pd.concat(dummies.values(), keys=dummies.keys(), axis=1)
 
-    def to_csv(self):
+    def to_csv(self, tag=""):
         """ Writes a csv-file in `varsomdata/localstorage` named according to the properties of the dataset.
         A `label.csv` is also always written.
         """
-        # Write training data
         regobs = ""
         if len(self.regobs_types) and self.days >= 2:
-            regobs = f"_regobs_{'_'.join([REG_ENG[obs_type] for obs_type in self.regobs_types])}"
+            regobs = f"_regobs_{'--'.join([REG_ENG[obs_type] for obs_type in self.regobs_types])}"
         varsom = "" if self.with_varsom else "_novarsom"
-        pathname_data = f"{se.local_storage}data_v{CSV_VERSION}_days_{self.days}{regobs}{varsom}.csv"
-        pathname_label = f"{se.local_storage}label_v{CSV_VERSION}_days_{self.days}{regobs}{varsom}.csv"
-        pathname_weight = f"{se.local_storage}weight_v{CSV_VERSION}_days_{self.days}{regobs}{varsom}.csv"
-        ld = self.denormalize()
+        tag = "_" + tag if tag else ""
+        if self.single:
+            pathname_data = f"{se.local_storage}single_data_v{CSV_VERSION}{tag}_days_{self.days}{regobs}{varsom}.csv"
+            pathname_label = f"{se.local_storage}single_label_v{CSV_VERSION}{tag}_days_{self.days}{regobs}{varsom}.csv"
+            pathname_weight = f"{se.local_storage}single_weight_v{CSV_VERSION}{tag}_days_{self.days}{regobs}{varsom}.csv"
+            try:
+                old_ld = LabeledData.from_csv(
+                    self.days,
+                    self.regobs_types,
+                    with_varsom=self.with_varsom,
+                    seasons=self.seasons,
+                    tag=tag,
+                )
+                ld = self.denormalize()
+                ld.data = pd.concat([old_ld.data, ld.data], axis=0)
+                ld.row_weight = pd.concat([old_ld.row_weight, ld.row_weight], axis=0)
+                unique = np.unique(ld.label.index)
+                ld.data = ld.data.loc[unique]
+                ld.row_weight = ld.row_weight.loc[unique]
+                if old_ld.label is not None:
+                    ld.label = pd.concat([old_ld.label, ld.label], axis=0)
+                if ld.label is not None:
+                    ld.label = ld.label.loc[unique]
+            except CsvMissingError:
+                ld = self.denormalize()
+        else:
+            seasons = "--".join(self.seasons)
+            pathname_data = f"{se.local_storage}data_v{CSV_VERSION}{tag}_days_{self.days}{regobs}{varsom}_{seasons}.csv"
+            pathname_label = f"{se.local_storage}label_v{CSV_VERSION}{tag}_days_{self.days}{regobs}{varsom}_{seasons}.csv"
+            pathname_weight = f"{se.local_storage}weight_v{CSV_VERSION}{tag}_days_{self.days}{regobs}{varsom}_{seasons}.csv"
+            ld = self.denormalize()
+
         ld.data.to_csv(pathname_data, sep=';')
-        ld.label.to_csv(pathname_label, sep=';')
         ld.row_weight.to_csv(pathname_weight, sep=';', header=False)
+        if ld.label is not None:
+            ld.label.to_csv(pathname_label, sep=';')
 
     def to_aw(self):
         """Convert predictions to AvalancheWarnings.
 
         :return: AvalancheWarning[]
         """
+        if self.label is None or self.pred is None:
+            raise DatasetMissingLabel()
+
         aws = []
         for name, row in self.pred.iterrows():
             aw = gf.AvalancheWarning()
@@ -610,42 +702,67 @@ class LabeledData:
         """
         ld = LabeledData(
             self.data.copy(deep=True),
-            self.label.copy(deep=True),
+            self.label.copy(deep=True) if self.label is not None else None,
             self.row_weight.copy(deep=True),
             self.days,
             copy.copy(self.regobs_types),
-            self.with_varsom
+            self.with_varsom,
+            self.seasons
         )
         ld.is_normalized = self.is_normalized
         ld.scaler = self.scaler
-        ld.pred = self.pred.copy(deep=True)
+        ld.pred = self.pred.copy(deep=True) if self.pred is not None else None
         return ld
 
     @staticmethod
-    def from_csv(days, regobs_types, with_varsom=True):
+    def from_csv(days, regobs_types, seasons=('2017-18', '2018-19', '2019-20'), with_varsom=True, tag=""):
         """Read LabeledData from previously written .csv-file.
 
         :param days:            How far back in time values should data be included.
         :param regobs_types:    A tuple/list of strings of types of observations to fetch from RegObs.,
                                 e.g., `("Faretegn")`.
         """
+        single = not seasons
+        seasons = "--".join(sorted(list(set(seasons if seasons else []))))
+        tag = "_" + tag if tag else ""
         regobs = ""
         if len(regobs_types) and days >= 2:
-            regobs = f"_regobs_{'_'.join([REG_ENG[obs_type] for obs_type in regobs_types])}"
+            regobs = f"_regobs_{'--'.join([REG_ENG[obs_type] for obs_type in regobs_types])}"
         varsom = "" if with_varsom else "_novarsom"
-        pathname_data = f"{se.local_storage}data_v{CSV_VERSION}_days_{days}{regobs}{varsom}.csv"
-        pathname_label = f"{se.local_storage}label_v{CSV_VERSION}_days_{days}{regobs}{varsom}.csv"
-        pathname_weight = f"{se.local_storage}weight_v{CSV_VERSION}_days_{days}{regobs}{varsom}.csv"
+        if single:
+            pathname_data = f"{se.local_storage}single_data_v{CSV_VERSION}{tag}_days_{days}{regobs}{varsom}.csv"
+            pathname_label = f"{se.local_storage}single_label_v{CSV_VERSION}{tag}_days_{days}{regobs}{varsom}.csv"
+            pathname_weight = f"{se.local_storage}single_weight_v{CSV_VERSION}{tag}_days_{days}{regobs}{varsom}.csv"
+        else:
+            pathname_data = f"{se.local_storage}data_v{CSV_VERSION}{tag}_days_{days}{regobs}{varsom}_{seasons}.csv"
+            pathname_label = f"{se.local_storage}label_v{CSV_VERSION}{tag}_days_{days}{regobs}{varsom}_{seasons}.csv"
+            pathname_weight = f"{se.local_storage}weight_v{CSV_VERSION}{tag}_days_{days}{regobs}{varsom}_{seasons}.csv"
         try:
-            data = pd.read_csv(pathname_data, sep=";", header=[0, 1], index_col=[0, 1])
             label = pd.read_csv(pathname_label, sep=";", header=[0, 1, 2], index_col=[0, 1], low_memory=False, dtype="U")
-            row_weight = pd.read_csv(pathname_weight, sep=";", header=None, index_col=[0, 1], low_memory=False, squeeze=True)
             columns = [(col[0], re.sub(r'Unnamed:.*', _NONE, col[1]), col[2]) for col in label.columns.tolist()]
             label.columns = pd.MultiIndex.from_tuples(columns)
         except FileNotFoundError:
+            label = None
+        try:
+            data = pd.read_csv(pathname_data, sep=";", header=[0, 1], index_col=[0, 1])
+            row_weight = pd.read_csv(pathname_weight, sep=";", header=None, index_col=[0, 1], low_memory=False, squeeze=True)
+            data.columns = pd.MultiIndex.from_tuples(data.columns)
+        except FileNotFoundError:
             raise CsvMissingError()
-        return LabeledData(data, label, row_weight, days, regobs_types, with_varsom)
+        return LabeledData(data, label, row_weight, days, regobs_types, with_varsom, seasons)
 
 
 class CsvMissingError(Error):
+    pass
+
+class SingleDateCsvError(Error):
+    pass
+
+class NoBulletinWithinRangeError(Error):
+    pass
+
+class NoDataFoundError(Error):
+    pass
+
+class DatasetMissingLabel(Error):
     pass
