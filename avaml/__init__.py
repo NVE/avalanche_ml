@@ -21,11 +21,11 @@ class Error(Exception):
 
 def merge(b, a):
     """
-    Merges two dicts. Precedence is given to the second dict. It will also be overwritten.
+    Merges two dicts. Precedence is given to the second dict. The first dict will be overwritten.
     """
     for key in a:
         if key in b and isinstance(a[key], dict) and isinstance(b[key], dict):
             b[key] = merge(b[key], a[key])
-        else:
+        elif a[key] is not None:
             b[key] = a[key]
     return b
