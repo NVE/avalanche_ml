@@ -6,7 +6,7 @@ from avaml.aggregatedata import ForecastDataset, LabeledData, CsvMissingError, D
 from sklearn.tree import DecisionTreeClassifier
 
 from avaml.machine.sk_clustered import SKClusteringMachine
-from datetime import date
+from datetime import date, timedelta
 
 days = 2
 regobs_types = [
@@ -22,7 +22,7 @@ expected_errors = (NoBulletinWithinRangeError, DatasetMissingLabel, NoDataFoundE
 
 tag_label = sys.argv[1] if len(sys.argv) > 1 else ""
 tag_nolabel = tag_label + "-nolabel"
-today = date.today()
+today = date.today() + timedelta(days=1)
 #today = date.fromisoformat("2020-03-11")
 
 getData = lambda regobs, days_, with_varsom: ForecastDataset\
