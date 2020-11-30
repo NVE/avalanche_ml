@@ -597,11 +597,11 @@ class LabeledData:
         if len(self.regobs_types) and self.days >= 2:
             regobs = f"_regobs_{'--'.join([REG_ENG[obs_type] for obs_type in self.regobs_types])}"
         varsom = "" if self.with_varsom else "_novarsom"
-        tag = "_" + tag if tag else ""
+        tag_ = "_" + tag if tag else ""
         if self.single:
-            pathname_data = f"{se.local_storage}single_data_v{CSV_VERSION}{tag}_days_{self.days}{regobs}{varsom}.csv"
-            pathname_label = f"{se.local_storage}single_label_v{CSV_VERSION}{tag}_days_{self.days}{regobs}{varsom}.csv"
-            pathname_weight = f"{se.local_storage}single_weight_v{CSV_VERSION}{tag}_days_{self.days}{regobs}{varsom}.csv"
+            pathname_data = f"{se.local_storage}single_data_v{CSV_VERSION}{tag_}_days_{self.days}{regobs}{varsom}.csv"
+            pathname_label = f"{se.local_storage}single_label_v{CSV_VERSION}{tag_}_days_{self.days}{regobs}{varsom}.csv"
+            pathname_weight = f"{se.local_storage}single_weight_v{CSV_VERSION}{tag_}_days_{self.days}{regobs}{varsom}.csv"
             try:
                 old_ld = LabeledData.from_csv(
                     self.days,
@@ -613,10 +613,10 @@ class LabeledData:
                 ld = self.denormalize()
                 ld.data = pd.concat([old_ld.data, ld.data], axis=0)
                 ld.row_weight = pd.concat([old_ld.row_weight, ld.row_weight], axis=0)
-                unique = np.unique(ld.label.index)
+                unique = np.unique(ld.data.index)
                 ld.data = ld.data.loc[unique]
                 ld.row_weight = ld.row_weight.loc[unique]
-                if old_ld.label is not None:
+                if old_ld.label is not None and ld.label is not None:
                     ld.label = pd.concat([old_ld.label, ld.label], axis=0)
                 if ld.label is not None:
                     ld.label = ld.label.loc[unique]
@@ -624,9 +624,9 @@ class LabeledData:
                 ld = self.denormalize()
         else:
             seasons = "--".join(self.seasons)
-            pathname_data = f"{se.local_storage}data_v{CSV_VERSION}{tag}_days_{self.days}{regobs}{varsom}_{seasons}.csv"
-            pathname_label = f"{se.local_storage}label_v{CSV_VERSION}{tag}_days_{self.days}{regobs}{varsom}_{seasons}.csv"
-            pathname_weight = f"{se.local_storage}weight_v{CSV_VERSION}{tag}_days_{self.days}{regobs}{varsom}_{seasons}.csv"
+            pathname_data = f"{se.local_storage}data_v{CSV_VERSION}{tag_}_days_{self.days}{regobs}{varsom}_{seasons}.csv"
+            pathname_label = f"{se.local_storage}label_v{CSV_VERSION}{tag_}_days_{self.days}{regobs}{varsom}_{seasons}.csv"
+            pathname_weight = f"{se.local_storage}weight_v{CSV_VERSION}{tag_}_days_{self.days}{regobs}{varsom}_{seasons}.csv"
             ld = self.denormalize()
 
         ld.data.to_csv(pathname_data, sep=';')
