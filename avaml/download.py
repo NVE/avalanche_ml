@@ -572,6 +572,10 @@ def _get_weather_obs(year, date=None, days=None, max_file_age=23):
             date_region = (forecast.date_valid.isoformat(), forecast.region_id)
             weather_varsom[key][date_region] = mapper(getattr(forecast.mountain_weather, orig_key))
 
+    # We prioritize APS before the Varsom data.
+    # Varsom is manually adjusted by a professional,
+    # but by the time we download it, the data will be
+    # 18-24 h old.
     return merge(weather_varsom, weather_api)
 
 

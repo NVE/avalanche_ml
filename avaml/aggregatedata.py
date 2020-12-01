@@ -183,9 +183,9 @@ class ForecastDataset:
         self.date = date
         self.use_label = use_label
 
-        self.regobs = _get_regobs_obs(None, regobs_types, date=date, days=days)
-        self.varsom, labels = _get_varsom_obs(None, date=date, days=days-1 if days > 0 else 1)
-        self.weather = _get_weather_obs(None, date=date, days=days-2 if days > 2 else 1)
+        self.regobs = _get_regobs_obs(None, regobs_types, date=date, days=days, max_file_age=0)
+        self.varsom, labels = _get_varsom_obs(None, date=date, days=days-1 if days > 0 else 1, max_file_age=0)
+        self.weather = _get_weather_obs(None, date=date, days=days-2 if days > 2 else 1, max_file_age=0)
 
         self.labels = {}
         for label_keys, label in labels.items():
