@@ -2,6 +2,7 @@ __author__ = 'arwi'
 
 from avaml import Error
 
+DILL_VERSION = '3'
 
 class BulletinMachine:
     def __init__(self):
@@ -62,4 +63,3 @@ class NotFittedError(Error):
 
 class FeatureImportanceMissingError(Error):
     pass
-

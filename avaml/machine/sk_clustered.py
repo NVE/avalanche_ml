@@ -8,11 +8,10 @@ from sklearn.tree import export_graphviz
 
 from avaml import setenvironment as se, _NONE
 from avaml.aggregatedata import DatasetMissingLabel
-from avaml.machine import BulletinMachine, AlreadyFittedError
+from avaml.download import PROBLEMS
+from avaml.machine import BulletinMachine, AlreadyFittedError, DILL_VERSION
 
 __author__ = 'arwi'
-
-DILL_VERSION = '3'
 
 class SKClusteringMachine(BulletinMachine):
     def __init__(
@@ -115,7 +114,7 @@ class SKClusteringMachine(BulletinMachine):
 
             self.mode[dlevel] = label_mode
 
-    def predict(self, labeled_data):
+    def predict(self, labeled_data, force_subprobs=False):
         """Predict data using supplied LabeledData.
 
         :param labeled_data: LabeledData. Dataset to predict. May have empty LabeledData.label.
@@ -128,13 +127,29 @@ class SKClusteringMachine(BulletinMachine):
         y["CLASS", "", "danger_level"] = self.classifier.predict(labeled_data.data)
 
         for dlevel in range(1, 5):
+            mode = self.mode[dlevel]
             dlevel_rows = y["CLASS", "", "danger_level"] == str(dlevel)
             if dlevel_rows.sum():
                 X = labeled_data.data.loc[dlevel_rows, self.cols]
 
                 distances = pairwise_distances(self.cluster_features[dlevel], X)
                 c_ids = self.cluster_ids[dlevel][np.argmin(distances, axis=0)]
-                y.loc[dlevel_rows] = self.mode[dlevel].values[c_ids]
+                y.loc[dlevel_rows] = mode.values[c_ids]
+
+                """Handle the case of force_subprobs (not guaranteed to work)."""
+                if force_subprobs:
+                    prob_cols = [name.startswith("problem_") for name in mode.columns.get_level_values(2)]
+                    for subprob in PROBLEMS.values():
+                        if force_subprobs and subprob in y.columns.get_level_values(1):
+                            mode_rows = np.any(np.char.equal(mode.loc[:, prob_cols].values.astype("U"), subprob), axis=1)
+                            cluster_features = self.cluster_features[dlevel].loc[np.ix_(mode_rows)]
+                            if cluster_features.shape[0]:
+                                mode_subprob = mode.loc[np.ix_(mode_rows)]["CLASS", subprob]
+                                cluster_ids = self.cluster_ids[dlevel][np.ix_(mode_rows)]
+                                distances = pairwise_distances(cluster_features, X)
+                                c_ids = cluster_ids[np.argmin(distances, axis=0)]
+                                y.loc[dlevel_rows]["CLASS", subprob] = mode_subprob.values[c_ids]
+
 
         ld = labeled_data.copy()
         ld.pred = y

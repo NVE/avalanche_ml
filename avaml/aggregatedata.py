@@ -11,7 +11,7 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import StratifiedKFold, KFold
 
 from avaml import Error, varsomdata, setenvironment as se, _NONE, CSV_VERSION, REGIONS, merge
-from avaml.download import _get_varsom_obs, _get_weather_obs, _get_regobs_obs, REG_ENG
+from avaml.download import _get_varsom_obs, _get_weather_obs, _get_regobs_obs, REG_ENG, PROBLEMS
 from varsomdata import getforecastapi as gf
 from varsomdata import getmisc as gm
 
@@ -369,9 +369,11 @@ class LabeledData:
         self.days = days
         self.with_varsom = with_varsom
         self.regobs_types = regobs_types
-        self.scaler.fit(self.data.values)
+        if self.data is not None:
+            self.scaler.fit(self.data.values)
         self.single = not seasons
         self.seasons = sorted(list(set(seasons if seasons else [])))
+        self.with_regions = True
 
     def normalize(self):
         """Normalize the data feature-wise using MinMax.
@@ -400,6 +402,54 @@ class LabeledData:
             return ld
         else:
             return self.copy()
+
+    def drop_regions(self):
+        """Remove regions from input data"""
+        if self.with_regions:
+            ld = self.copy()
+            region_columns = list(filter(lambda x: re.match(r'^region_id', x[0]), ld.data.columns))
+            ld.data.drop(region_columns, axis=1, inplace=True)
+            return ld
+        else:
+            return self.copy()
+
+    def valid_pred(self):
+        """Makes the bulletins internally coherent. E.g., removes problem 3 if problem 2 is blank."""
+        if self.pred is None:
+            raise NotPredictedError
+
+        ld = self.copy()
+
+        # Handle Problem 1-3
+        prob_cols = []
+        for n in range(1, 4):
+            if f"problem_{n}" in list(ld.pred["CLASS", _NONE].columns):
+                prob_cols.append(("CLASS", _NONE, f"problem_{n}"))
+        prev_eq = np.zeros((ld.pred.shape[0], len(prob_cols)), dtype=bool)
+        for n, col in enumerate(prob_cols):
+            for mcol in prob_cols[0:n]:
+                # If equal to problem_n-1/2, set to _NONE.
+                prev_eq[:, n] = np.logical_or(
+                    prev_eq[:, n],
+                    np.equal(ld.pred[mcol], ld.pred[col])
+                )
+                # Set to None if problem_n-1/2 was _NONE.
+                prev_eq[:, n] = np.logical_or(
+                    prev_eq[:, n],
+                    ld.pred[mcol] == _NONE
+                )
+            ld.pred.loc[prev_eq[:, n], col] = _NONE
+
+        # Delete subproblem solutions that are irrelevant
+        for subprob in PROBLEMS.values():
+            rows = np.any(np.char.equal(ld.pred.loc[:, prob_cols].values.astype("U"), subprob), axis=1) == False
+            columns = [name == subprob for name in ld.pred.columns.get_level_values(1)]
+            ld.pred.loc[rows, columns] = _NONE
+
+        # Set problem_amount to the right number
+        ld.pred['CLASS', _NONE, 'problem_amount'] = np.sum(ld.pred.loc[:, prob_cols] != _NONE, axis=1)
+
+        return ld
 
     def kfold(self, k=5, shuffle=True, stratify=None):
         """Returns an iterable of LabeledData-tuples. The first element is the training dataset
@@ -701,7 +751,7 @@ class LabeledData:
         :return: copied LabeledData
         """
         ld = LabeledData(
-            self.data.copy(deep=True),
+            self.data.copy(deep=True) if self.data is not None else None,
             self.label.copy(deep=True) if self.label is not None else None,
             self.row_weight.copy(deep=True),
             self.days,
@@ -765,4 +815,7 @@ class NoDataFoundError(Error):
     pass
 
 class DatasetMissingLabel(Error):
+    pass
+
+class NotPredictedError(Error):
     pass
