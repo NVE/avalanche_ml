@@ -113,7 +113,7 @@ class SKClusteringMachine(BulletinMachine):
 
             self.mode[dlevel] = label_mode
 
-    def predict(self, labeled_data):
+    def predict(self, labeled_data, force_subprobs=False):
         """Predict data using supplied LabeledData.
 
         :param labeled_data: LabeledData. Dataset to predict. May have empty LabeledData.label.
@@ -126,6 +126,7 @@ class SKClusteringMachine(BulletinMachine):
         y["CLASS", "", "danger_level"] = self.classifier.predict(labeled_data.data)
 
         for dlevel in range(1, 5):
+            mode = self.mode[dlevel]
             dlevel_rows = y["CLASS", "", "danger_level"] == str(dlevel)
             if dlevel_rows.sum():
                 X = labeled_data.data.loc[dlevel_rows, self.cols]

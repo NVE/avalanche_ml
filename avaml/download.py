@@ -1,3 +1,4 @@
+import math
 import os
 import pickle
 import re
@@ -137,8 +138,8 @@ WEATHER_VARSOM = {
     "precip": ("precip_region", lambda x: x),
     "wind_speed": ("wind_speed", lambda x: WIND_SPEEDS.get(x, 0)),
     "wind_change_speed": ("change_wind_speed", lambda x: WIND_SPEEDS.get(x, 0)),
-    "temp_min": ("temperature_min", lambda x: x),
-    "temp_max": ("temperature_max", lambda x: x),
+    "temp_min": ("temperature_min", lambda x: x/abs(x) * math.sqrt(abs(x)) if x != 0 else 0),
+    "temp_max": ("temperature_max", lambda x: x/abs(x) * math.sqrt(abs(x)) if x != 0 else 0),
     "temp_lev": ("temperature_elevation", lambda x: x),
     "temp_freeze_lev": ("freezing_level", lambda x: x),
     "wind_dir_N": ("wind_direction", lambda x: x == "N"),

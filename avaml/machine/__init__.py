@@ -63,4 +63,3 @@ class NotFittedError(Error):
 
 class FeatureImportanceMissingError(Error):
     pass
-
