@@ -141,10 +141,12 @@ class MetaMachine:
             if ld is None:
                 ld = labeled_data
                 ld.data = None
-            else:
+            elif ld.label is not None and labeled_data.label is not None:
                 combined = ld.label.combine_first(labeled_data.label)
                 ld.label = ld.label.reindex(ld.label.index.union(labeled_data.label.index))
                 ld.label.loc[combined.index] = combined
+            elif ld.label is None and labeled_data.label is not None:
+                ld.label = labeled_data.label
 
         pred = None
         for label in best_models.index:
