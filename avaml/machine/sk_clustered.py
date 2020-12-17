@@ -136,21 +136,6 @@ class SKClusteringMachine(BulletinMachine):
                 c_ids = self.cluster_ids[dlevel][np.argmin(distances, axis=0)]
                 y.loc[dlevel_rows] = mode.values[c_ids]
 
-                """Handle the case of force_subprobs (not guaranteed to work)."""
-                if force_subprobs:
-                    prob_cols = [name.startswith("problem_") for name in mode.columns.get_level_values(2)]
-                    for subprob in PROBLEMS.values():
-                        if force_subprobs and subprob in y.columns.get_level_values(1):
-                            mode_rows = np.any(np.char.equal(mode.loc[:, prob_cols].values.astype("U"), subprob), axis=1)
-                            cluster_features = self.cluster_features[dlevel].loc[np.ix_(mode_rows)]
-                            if cluster_features.shape[0]:
-                                mode_subprob = mode.loc[np.ix_(mode_rows)]["CLASS", subprob]
-                                cluster_ids = self.cluster_ids[dlevel][np.ix_(mode_rows)]
-                                distances = pairwise_distances(cluster_features, X)
-                                c_ids = cluster_ids[np.argmin(distances, axis=0)]
-                                y.loc[dlevel_rows]["CLASS", subprob] = mode_subprob.values[c_ids]
-
-
         ld = labeled_data.copy()
         ld.pred = y
         ld.pred = ld.pred.fillna("").astype("U")
