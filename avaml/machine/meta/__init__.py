@@ -50,7 +50,7 @@ class MetaMachine:
         fd_noregobs = ForecastDataset(regobs_types=[], seasons=seasons)
         fd_regobs = ForecastDataset(regobs_types=regobs_types, seasons=seasons)
 
-        for days, varsom, regobs in setup:
+        for days, varsom, regobs, temp in setup:
             if regobs:
                 labeled_data = fd_regobs.label(days=days, with_varsom=varsom)
             else:
@@ -58,10 +58,13 @@ class MetaMachine:
 
             labeled_data = labeled_data.normalize()
             labeled_data = labeled_data.drop_regions()
+            if temp:
+                labeled_data = labeled_data.stretch_temperatures()
 
             for m_tag, create_machine in [("SKClustering", createClustering), ("SKClassifier", createClassifier)]:
-                tag = f"{m_tag}_{days}_noregions_{'' if varsom else 'no'}varsom_{'-'.join(regobs)}"
+                tag = f"{m_tag}_{days}_noregions_{'' if varsom else 'no'}varsom_{'-'.join(regobs)}{'_temp' if temp else ''}"
                 print(f"Training {tag}, size {labeled_data.data.shape}")
+
 
                 machine = create_machine()
                 machine.fit(labeled_data)
@@ -102,10 +105,10 @@ class MetaMachine:
             machine_scores.index.get_level_values(3) == "0", machine_scores.index.get_level_values(3) == ""
         )]
         machine_scores = machine_scores.drop(empty_indices)
-        grouped_scores = machine_scores.groupby(level=[0, 1, 2]).mean()
+        grouped_scores = machine_scores.groupby(level=[0, 1, 2]).min()
 
-        for days, varsom, regobs in setup:
-            d_tag = f"{days}_noregions_{'' if varsom else 'no'}varsom_{'-'.join(regobs)}"
+        for days, varsom, regobs, temp in setup:
+            d_tag = f"{days}_noregions_{'' if varsom else 'no'}varsom_{'-'.join(regobs)}{'_temp' if temp else ''}"
             print(d_tag)
             try:
                 print("Collecting data")
@@ -116,6 +119,9 @@ class MetaMachine:
                     data = LabeledData.from_csv(days, regobs, False, varsom, csv_tag)
                 data = data.normalize()
                 data = data.drop_regions()
+                if temp:
+                    data = data.stretch_temperatures()
+
                 collected = True
             except expected_errors:
                 print("Failed to collect data")

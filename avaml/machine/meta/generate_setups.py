@@ -41,11 +41,15 @@ regobs_types = [
 ]
 
 setup = [
-    (0, False, []),
-    (1, False, []),
-    (1, True, []),
+    (0, False, [], False),
+    (0, False, [], True),
+    (1, False, [], False),
+    (1, False, [], True),
+    (1, True, [], False),
+    (1, True, [], True),
 ]
 for days in [2, 3, 5, 7, 10, 14]:
     for varsom in [False, True]:
         for regobs in [[], regobs_types]:
-            setup.append((days, varsom, regobs))
+            for temp in [False, True]:
+                setup.append((days, varsom, regobs, temp))

@@ -413,6 +413,14 @@ class LabeledData:
         else:
             return self.copy()
 
+    def stretch_temperatures(self):
+        """Stretch out temperatures near zero"""
+        ld = self.copy()
+        if self.data is not None:
+            temp_cols = [bool(re.match(r"^temp_(max|min)$", title)) for title in ld.data.columns.get_level_values(0)]
+            ld.data.loc[:, temp_cols] = np.sign(ld.data.loc[:, temp_cols]) * np.sqrt(np.abs(ld.data.loc[:, temp_cols]))
+        return ld
+
     def valid_pred(self):
         """Makes the bulletins internally coherent. E.g., removes problem 3 if problem 2 is blank."""
         if self.pred is None:
