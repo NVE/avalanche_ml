@@ -89,7 +89,11 @@ class MetaMachine:
                     else:
                         results_machine = results_machine + (results_series - results_machine) / (split_idx + 1)
 
-                f1_machine = results_machine["f1"].rename(tag)
+                results_machine["rmse"] = -results_machine["rmse"]
+                f1_machine = results_machine[["f1", "rmse"]]\
+                    .apply(lambda x: pd.Series(x.dropna().to_numpy()), axis=1)\
+                    .squeeze()\
+                    .rename(tag)
                 self.f1 = f1_machine if self.f1 is None else pd.concat([self.f1, f1_machine], axis=1)
 
     def predict(self, seasons=["2020-21"], csv_tag=None):
@@ -100,9 +104,11 @@ class MetaMachine:
         machine_scores = self.f1
         ms_idx = machine_scores.index.to_frame().fillna("")
         machine_scores.index = pd.MultiIndex.from_frame(ms_idx)
-        machine_scores = machine_scores.loc[["CLASS"]]
-        empty_indices = machine_scores.index[np.logical_or(
-            machine_scores.index.get_level_values(3) == "0", machine_scores.index.get_level_values(3) == ""
+        empty_indices = machine_scores.index[np.logical_and(
+            np.logical_or(
+                machine_scores.index.get_level_values(3) == "0", machine_scores.index.get_level_values(3) == ""
+            ),
+            machine_scores.index.get_level_values(0) != "REAL"
         )]
         machine_scores = machine_scores.drop(empty_indices)
         grouped_scores = machine_scores.groupby(level=[0, 1, 2]).min()

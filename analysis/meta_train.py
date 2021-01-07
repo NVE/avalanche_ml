@@ -8,6 +8,9 @@ from avaml.machine.meta import MetaMachine
 
 id = "meta_test"
 
+print("Initializing")
 meta_model = MetaMachine()
+print("Fitting")
 meta_model.fit()
+print("Dumping")
 meta_model.dump(id)
