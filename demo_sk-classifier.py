@@ -1,6 +1,7 @@
 from avaml.aggregatedata import ForecastDataset, LabeledData, REG_ENG, CsvMissingError
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import MultiTaskElasticNet
+import pandas as pd
 
 from avaml.machine.sk_classifier import SKClassifierMachine
 
@@ -60,7 +61,14 @@ for split_idx, (training_data, testing_data) in enumerate(labeled_data.kfold(5, 
     split_imp = ubm.feature_importances()
     importances = split_imp if importances is None else importances + (split_imp - importances) / (split_idx + 1)
     f1_series = predicted_data.f1()
-    f1 = f1_series if f1 is None else f1 + (f1_series - f1) / (split_idx + 1)
+    idx = f1_series.index if f1 is None else list(set(f1_series.index.to_list()).intersection(set(f1.index.to_list())))
+    f1_series = pd.DataFrame(f1_series, index=idx).sort_index()
+    f1_series.loc[["CLASS", "MULTI"], ["f1", "precision", "recall"]].fillna(0, inplace=True)
+    if f1 is None:
+        f1 = f1_series
+    else:
+        f1 = pd.DataFrame(f1, index=idx).sort_index()
+        f1 = f1 + (f1_series - f1) / (split_idx + 1)
 
 print("Writing predictions")
 predicted_data.pred.to_csv("output/{0}_sk-classifier_pred.csv".format(model_prefix), sep=';')
