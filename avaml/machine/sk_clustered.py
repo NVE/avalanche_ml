@@ -74,7 +74,7 @@ class SKClusteringMachine(BulletinMachine):
 
             for c_id in set(cluster_ids):
                 c_labels = cluster_labels.loc[cluster_ids == c_id]
-                label_mode.loc[c_id, pd.IndexSlice["CLASS", _NONE]] = c_labels["CLASS", ""].mode().iloc[0].values
+                label_mode.loc[c_id, pd.IndexSlice["CLASS", _NONE]] = c_labels["CLASS", ""].mode(dropna=False).iloc[0].values
 
                 # Fixing problem ordering
                 problem_1 = label_mode.loc[c_id, ("CLASS", _NONE, "problem_1")]
