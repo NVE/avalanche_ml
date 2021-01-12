@@ -372,6 +372,7 @@ class LabeledData:
         self.scaler.fit(self.data.values)
         self.single = not seasons
         self.seasons = sorted(list(set(seasons if seasons else [])))
+        self.with_regions = True
 
     def normalize(self):
         """Normalize the data feature-wise using MinMax.
@@ -397,6 +398,17 @@ class LabeledData:
             data = ld.scaler.inverse_transform(self.data.values)
             ld.data = pd.DataFrame(data=data, index=self.data.index, columns=self.data.columns)
             ld.is_normalized = False
+            return ld
+        else:
+            return self.copy()
+
+    def drop_regions(self):
+        """Remove regions from input data"""
+        if self.with_regions:
+            ld = self.copy()
+            region_columns = list(filter(lambda x: re.match(r'^region_id', x[0]), ld.data.columns))
+            ld.data.drop(region_columns, axis=1, inplace=True)
+            ld.with_regions = False
             return ld
         else:
             return self.copy()
