@@ -1,19 +1,12 @@
 from functools import reduce
 import re
-import copy
-import datetime as dt
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.model_selection import StratifiedKFold, KFold
 
-from avaml import Error, varsomdata, setenvironment as se, _NONE, CSV_VERSION, REGIONS, merge
+from avaml import _NONE
 from avaml.aggregatedata import DatasetMissingLabel
-from avaml.download import _get_varsom_obs, _get_weather_obs, _get_regobs_obs, REG_ENG, PROBLEMS
 from avaml.score.overlap import calc_overlap
-from varsomdata import getforecastapi as gf
-from varsomdata import getmisc as gm
 
 __author__ = 'arwi'
 
