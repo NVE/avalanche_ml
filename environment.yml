@@ -1,0 +1,14 @@
+name: avalanche_ml
+channels:
+- conda-forge
+dependencies:
+- python=3.7
+- dill
+- jupyter
+- numpy
+- pandas
+- scikit-learn
+- matplotlib
+- seaborn
+- requests
+- tensorflow-gpu=2.0
