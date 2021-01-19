@@ -11,3 +11,4 @@ dependencies:
 - matplotlib
 - seaborn
 - requests
+- tensorflow-gpu=2.0
