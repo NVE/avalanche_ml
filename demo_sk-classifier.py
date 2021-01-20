@@ -1,6 +1,7 @@
 from avaml.aggregatedata import ForecastDataset, LabeledData, REG_ENG, CsvMissingError
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import MultiTaskElasticNet
+import pandas as pd
 
 from avaml.machine.sk_classifier import SKClassifierMachine
 

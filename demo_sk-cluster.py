@@ -1,4 +1,5 @@
 from sklearn.cluster import AgglomerativeClustering
+import pandas as pd
 
 from avaml.aggregatedata import ForecastDataset, LabeledData, CsvMissingError
 from sklearn.tree import DecisionTreeClassifier
@@ -59,9 +60,5 @@ f1 = predicted_data.f1()
 
 print("Writing predictions")
 predicted_data.pred.to_csv("output/{0}_sk-cluster_pred.csv".format(model_prefix), sep=';')
-print("Writing importances")
-importances.to_csv("output/{0}_sk-cluster_importances.csv".format(model_prefix), sep=';')
 print("Writing F1 scores")
 f1.to_csv("output/{0}_sk-cluster_f1.csv".format(model_prefix), sep=";")
-print("Writing decision tree visualisation")
-ubm.dt_pdf("output/{0}_sk-cluster_dt".format(model_prefix))
