@@ -66,12 +66,12 @@ class Score:
     def __init__(self, labeled_data):
         def to_vec(df):
             level_2 = ["wet", "loose", "freq", "lev_max", "lev_min", "lev_fill", "aspect"]
-            columns = pd.MultiIndex.from_product([[_NONE], ["danger_level", "emergency_warning"]]).append(
+            columns = pd.MultiIndex.from_product([["global"], ["danger_level", "emergency_warning"]]).append(
                 pd.MultiIndex.from_product([[f"problem_{n}" for n in range(1, 4)], level_2])
             )
             vectors = pd.DataFrame(index=df.index, columns=columns)
-            vectors[(_NONE, "danger_level")] = df[("CLASS", _NONE, "danger_level")].astype(np.int) / 5
-            vectors[(_NONE, "emergency_warning")] = (
+            vectors[("global", "danger_level")] = df[("CLASS", _NONE, "danger_level")].astype(np.int) / 5
+            vectors[("global", "emergency_warning")] = (
                     df[("CLASS", _NONE, "emergency_warning")] == "Naturlig utløste skred"
             ).astype(np.int)
             for idx, row in df.iterrows():
