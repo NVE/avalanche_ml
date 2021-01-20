@@ -8,7 +8,6 @@ import datetime as dt
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.model_selection import StratifiedKFold, KFold
 
 from avaml import Error, varsomdata, setenvironment as se, _NONE, CSV_VERSION, REGIONS, merge
 from avaml.download import _get_varsom_obs, _get_weather_obs, _get_regobs_obs, REG_ENG
