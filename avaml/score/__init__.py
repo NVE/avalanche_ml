@@ -102,15 +102,16 @@ class Score:
             p_score.loc[idx] = np.array([problem_score] + spatial_diffs)
         weights = np.array([1, 1, 1])
         maxdist = np.power(weights, 2).sum()
+        score = np.power(
+            pd.concat([diff.iloc[:, :2], p_score[[("", "problem_score")]]], axis=1).astype(np.float) * weights,
+            2
+        ).sum(axis=1)
         score = pd.DataFrame(
-            np.power(
-                pd.concat([diff.iloc[:, :2], p_score[[("", "p_score")]]], axis=1).astype(np.float) * weights,
-                2
-            ).sum(axis=1),
+            pd.concat([score / maxdist, np.sqrt(score) / np.sqrt(maxdist)], axis=1).values,
             index=diff.index,
-            columns=pd.MultiIndex.from_tuples([(_NONE, "score")])
+            columns=pd.MultiIndex.from_tuples([(_NONE, "score"), (_NONE, "distance")])
         )
-        return pd.concat([score / maxdist, p_score, diff], axis=1).sort_index(axis=1)
+        return pd.concat([score, p_score, diff], axis=1).sort_index(axis=1)
 
 def dist(score1, score2):
     def distvec(vec1, vec2):
