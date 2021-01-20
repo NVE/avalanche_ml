@@ -1,3 +1,5 @@
+import math
+
 MAX = 2500
 
 def calc_overlap(vec1, vec2):
@@ -7,19 +9,19 @@ def calc_overlap(vec1, vec2):
     return aspect * height
 
 def aspect_overlap(aspect1, aspect2):
-    if aspect1 == "" or aspect2 == "":
-        return 0
-    aspect1 = int(aspect1.zfill(8), base=2)
-    aspect2 = int(aspect2.zfill(8), base=2)
-    return bin(aspect1 ^ aspect2).count("1") / 8
+    aspect1 = int(aspect1, base=2) if aspect1 and not math.isnan(int(aspect1)) else 0
+    aspect2 = int(aspect2, base=2) if aspect2 and not math.isnan(int(aspect2)) else 0
+    return (8 - bin(aspect1 ^ aspect2).count("1")) / 8
 
 def height_overlap(lev1_max, lev1_min, lev1_fill, lev2_max, lev2_min, lev2_fill):
     [(lev1_max, lev1_min, lev1_fill), (lev2_max, lev2_min, lev2_fill)] = sorted(
         [(lev1_max, lev1_min, lev1_fill), (lev2_max, lev2_min, lev2_fill)],
         key=lambda x: x[2]
     )
-    if not lev1_fill or not lev2_fill:
-        return 0
+    if not lev1_fill or math.isnan(lev1_fill):
+        return height_overlap(0, 0, 1, lev2_max, lev2_min, lev2_fill)
+    if not lev1_fill or math.isnan(lev2_fill):
+        return height_overlap(lev1_max, lev1_min, lev1_fill, 0, 0, 1)
     match = {
         (1, 1): (top_top, bottom_bottom),
         (1, 2): (top_bottom, top_bottom),
