@@ -101,12 +101,16 @@ class Score:
             problem_score, overlaps = dist(series, self.pred_vectors.loc[idx])
             p_score.loc[idx] = np.array([problem_score] + overlaps)
         weights = np.array([1, 1, 1])
-        maxdist = np.linalg.norm(weights)
-        score = pd.DataFrame(np.linalg.norm(
-            pd.concat([diff.iloc[:, :2], p_score[[("", "p_score")]]], axis=1).astype(np.float) * weights,
-            axis=1
-        ), index=diff.index, columns=pd.MultiIndex.from_tuples([(_NONE, "score")]))
-        return pd.concat([score / maxdist, p_score, diff], axis=1)
+        maxdist = np.power(weights, 2).sum()
+        score = pd.DataFrame(
+            np.power(
+                pd.concat([diff.iloc[:, :2], p_score[[("", "p_score")]]], axis=1).astype(np.float) * weights,
+                2
+            ).sum(axis=1),
+            index=diff.index,
+            columns=pd.MultiIndex.from_tuples([(_NONE, "score")])
+        )
+        return pd.concat([score / maxdist, p_score, diff], axis=1).sort_index(axis=1)
 
 def dist(score1, score2):
     def distvec(vec1, vec2):
