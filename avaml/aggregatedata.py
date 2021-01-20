@@ -8,7 +8,6 @@ import datetime as dt
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.model_selection import StratifiedKFold, KFold
 
 from avaml import Error, varsomdata, setenvironment as se, _NONE, CSV_VERSION, REGIONS, merge
 from avaml.download import _get_varsom_obs, _get_weather_obs, _get_regobs_obs, REG_ENG
@@ -412,37 +411,6 @@ class LabeledData:
             return ld
         else:
             return self.copy()
-
-    def kfold(self, k=5, shuffle=True, stratify=None):
-        """Returns an iterable of LabeledData-tuples. The first element is the training dataset
-        and the second is for testing.
-
-        :param k: Int: Number of folds.
-        :param shuffle: Bool: Whether rows should be shuffled before folding. Defaults to True.
-        :return: Iterable<(LabeledData, LabeledData)>
-        """
-        if self.label is None or self.pred is None:
-            raise DatasetMissingLabel()
-        if stratify is None:
-            kf = KFold(n_splits=k, shuffle=shuffle)
-            split = kf.split(self.data)
-        else:
-            kf = StratifiedKFold(n_splits=k, shuffle=shuffle)
-            split = kf.split(self.data, self.label[stratify])
-        array = []
-        for train_index, test_index in split:
-            training_data = self.copy()
-            training_data.data = training_data.data.iloc[train_index]
-            training_data.label = training_data.label.iloc[train_index]
-            training_data.pred = training_data.pred.iloc[train_index]
-            training_data.row_weight = training_data.row_weight.iloc[train_index]
-            testing_data = self.copy()
-            testing_data.data = testing_data.data.iloc[test_index]
-            testing_data.label = testing_data.label.iloc[test_index]
-            testing_data.pred = testing_data.pred.iloc[test_index]
-            testing_data.row_weight = testing_data.row_weight.iloc[test_index]
-            array.append((training_data, testing_data))
-        return array
 
     def f1(self):
         """Get F1, precision, recall and RMSE of all labels.
