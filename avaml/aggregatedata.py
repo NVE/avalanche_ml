@@ -8,7 +8,6 @@ import datetime as dt
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.model_selection import StratifiedKFold, KFold
 
 from avaml import Error, varsomdata, setenvironment as se, _NONE, CSV_VERSION, REGIONS, merge
 from avaml.download import _get_varsom_obs, _get_weather_obs, _get_regobs_obs, REG_ENG
@@ -413,37 +412,6 @@ class LabeledData:
         else:
             return self.copy()
 
-    def kfold(self, k=5, shuffle=True, stratify=None):
-        """Returns an iterable of LabeledData-tuples. The first element is the training dataset
-        and the second is for testing.
-
-        :param k: Int: Number of folds.
-        :param shuffle: Bool: Whether rows should be shuffled before folding. Defaults to True.
-        :return: Iterable<(LabeledData, LabeledData)>
-        """
-        if self.label is None or self.pred is None:
-            raise DatasetMissingLabel()
-        if stratify is None:
-            kf = KFold(n_splits=k, shuffle=shuffle)
-            split = kf.split(self.data)
-        else:
-            kf = StratifiedKFold(n_splits=k, shuffle=shuffle)
-            split = kf.split(self.data, self.label[stratify])
-        array = []
-        for train_index, test_index in split:
-            training_data = self.copy()
-            training_data.data = training_data.data.iloc[train_index]
-            training_data.label = training_data.label.iloc[train_index]
-            training_data.pred = training_data.pred.iloc[train_index]
-            training_data.row_weight = training_data.row_weight.iloc[train_index]
-            testing_data = self.copy()
-            testing_data.data = testing_data.data.iloc[test_index]
-            testing_data.label = testing_data.label.iloc[test_index]
-            testing_data.pred = testing_data.pred.iloc[test_index]
-            testing_data.row_weight = testing_data.row_weight.iloc[test_index]
-            array.append((training_data, testing_data))
-        return array
-
     def f1(self):
         """Get F1, precision, recall and RMSE of all labels.
 
@@ -453,48 +421,54 @@ class LabeledData:
             raise DatasetMissingLabel()
 
         dummies = self.to_dummies()
-        old_settings = np.seterr(divide='raise', invalid='raise')
+        old_settings = np.seterr(divide='ignore', invalid='ignore')
 
-        class_types = []
-        for typ in ["CLASS", "MULTI"]:
-            if typ in dummies["label"].columns.get_level_values(0):
-                class_types.append(typ)
+        df_idx = pd.MultiIndex.from_arrays([[], [], [], []])
+        df = pd.DataFrame(index=df_idx, columns=["f1", "precision", "recall", "rmse"])
 
-        df = None
-        if len(class_types):
-            truth = dummies["label"][class_types]
-            pred = dummies["pred"][class_types]
-            true_pos = np.sum(truth * pred, axis=0)
-            try:
-                prec = true_pos / np.sum(pred, axis=0)
-            except FloatingPointError:
-                prec = pd.Series(index=pred.columns)
-            try:
-                recall = true_pos / np.sum(truth, axis=0)
-            except FloatingPointError:
-                recall = pd.Series(index=pred.columns)
-            try:
-                f1 = 2 * prec * recall / (prec + recall)
-            except FloatingPointError:
-                f1 = pd.Series(index=pred.columns)
+        try:
+            prob_cols = [
+                name.startswith("problem_") for name in self.label.columns.get_level_values(2)
+            ]
+        except KeyError:
+            prob_cols = pd.DataFrame(index=self.label.index)
+        for column, pred_series in dummies["pred"].items():
+            if column[1]:
+                true_idx = self.label.loc[
+                    np.any(np.char.equal(self.label.loc[:, prob_cols].values.astype("U"), column[1]), axis=1)
+                ].index
+                pred_idx = self.pred.loc[
+                    np.any(np.char.equal(self.pred.loc[:, prob_cols].values.astype("U"), column[1]), axis=1)
+                ].index
+                idx = list(set(true_idx.to_list()).intersection(set(pred_idx.to_list())))
+            else:
+                idx = list(set(self.label.index).intersection(set(self.pred.index)))
 
-            df = pd.DataFrame(index=truth.columns, columns=['f1', 'precision', 'recall', 'rmse'])
-            df.iloc[:, :3] = np.array([f1, prec, recall]).transpose()
-            df[['f1', 'precision', 'recall']] = df[['f1', 'precision', 'recall']].fillna(0)
+            if column[0] in ["CLASS", "MULTI"] and column in dummies["label"].columns:
+                truth = dummies["label"][column][idx]
+                pred = pred_series[idx]
+                true_pos = np.sum(truth * pred)
 
-        if "REAL" in dummies["label"].columns.get_level_values(0):
-            truth = dummies["label"][["REAL"]]
-            pred = dummies["pred"][["REAL"]]
-            try:
-                ntruth = (truth - truth.min(axis=0)) / (truth.max(axis=0) - truth.min(axis=0))
-                npred = (pred - pred.min(axis=0)) / (pred.max(axis=0) - pred.min(axis=0))
-                rmse = (np.sqrt(np.sum(np.square(npred - ntruth), axis=0)) / ntruth.shape[0])
-            except Exception:
-                rmse = np.nan
-            rmse = pd.Series(rmse, index=truth.columns)
-            df = rmse if df is None else pd.concat([df, rmse])
-            np.seterr(**old_settings)
+                if not np.sum(truth) or (column[0] == "CLASS" and column[1] and column[3] == "0"):
+                    continue
 
+                prec = true_pos / np.sum(pred) if np.sum(pred) else 0
+                recall = true_pos / np.sum(truth)
+                f1 = 2 * prec * recall / (prec + recall) if prec + recall else 0
+
+                df.loc[column] = pd.Series([f1, prec, recall, np.nan], index=df.columns)
+            elif column[0] in ["REAL"] and column in dummies["label"].columns:
+                truth = dummies["label"][column][idx]
+                pred = pred_series[idx]
+
+                if not len(truth):
+                    continue
+
+                rmse = np.sqrt(np.sum(np.square(pred - truth))) / len(truth)
+
+                df.loc[column] = pd.Series([np.nan, np.nan, np.nan, rmse], index=df.columns)
+
+        np.seterr(**old_settings)
         return df
 
     def to_timeseries(self):
