@@ -93,7 +93,7 @@ class Score:
     def calc(self):
         diff_cols = [not re.match(r"^(lev_)|(aspect)", col) for col in self.label_vectors.columns.get_level_values(1)]
         diff = self.pred_vectors.loc[:, diff_cols] - self.label_vectors.loc[:, diff_cols]
-        p_score_cols = pd.MultiIndex.from_tuples([(_NONE, "problem_score")]).append(
+        p_score_cols = pd.MultiIndex.from_tuples([("global", "problem_score")]).append(
             pd.MultiIndex.from_product([[f"problem_{n}" for n in range(1, 4)], ["spatial_diff"]])
         )
         p_score = pd.DataFrame(index=diff.index, columns=p_score_cols)
@@ -103,7 +103,7 @@ class Score:
         weights = np.array([1, 1, 1])
         maxdist = np.power(weights, 2).sum()
         score = np.power(
-            pd.concat([diff.iloc[:, :2], p_score[[("", "problem_score")]]], axis=1).astype(np.float) * weights,
+            pd.concat([diff.iloc[:, :2], p_score[[("global", "problem_score")]]], axis=1).astype(np.float) * weights,
             2
         ).sum(axis=1)
         score = pd.DataFrame(
