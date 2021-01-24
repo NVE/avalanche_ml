@@ -455,8 +455,22 @@ class LabeledData:
             ld.pred.loc[rows, columns] = _NONE
 
         # Set problem_amount to the right number
-        ld.pred['CLASS', _NONE, 'problem_amount'] = np.sum(ld.pred.loc[:, prob_cols] != _NONE, axis=1)
+        ld.pred['CLASS', _NONE, 'problem_amount'] = np.sum(ld.pred.loc[:, prob_cols] != _NONE, axis=1).astype(str)
 
+        # If lev_fill is "3" or "4", lev_min is always "0"
+        for subprob in PROBLEMS.values():
+            if "lev_fill" in ld.pred["CLASS", subprob].columns:
+                fill = ld.pred.astype(str)["CLASS", subprob, "lev_fill"]
+                if "lev_min" in ld.pred["REAL", subprob]:
+                    ld.pred.loc[np.logical_or(fill == "3", fill == "4"), ("REAL", subprob, "lev_min")] = "0"
+            if "lev_min" in ld.pred["REAL", subprob] and "lev_max" in ld.pred["REAL", subprob]:
+                real = ld.pred["REAL", subprob].replace("", np.nan).astype(np.float)
+                reversed_idx = real["lev_min"] > real["lev_max"]
+                average = real.loc[reversed_idx, "lev_min"] + real.loc[reversed_idx, "lev_max"] / 2
+                ld.pred.loc[reversed_idx, ("REAL", subprob, "lev_min")] = average
+                ld.pred.loc[reversed_idx, ("REAL", subprob, "lev_max")] = average
+
+        ld.pred = ld.pred.astype(str)
         return ld
 
     def f1(self):
@@ -620,7 +634,7 @@ class LabeledData:
                 pass
 
             dummies[name] = pd.concat(dummies_types.values(), keys=dummies_types.keys(), axis=1)
-        return pd.concat(dummies.values(), keys=dummies.keys(), axis=1)
+        return pd.concat(dummies.values(), keys=dummies.keys(), axis=1).replace("", np.nan).astype(np.float)
 
     def to_csv(self, tag=""):
         """ Writes a csv-file in `varsomdata/localstorage` named according to the properties of the dataset.

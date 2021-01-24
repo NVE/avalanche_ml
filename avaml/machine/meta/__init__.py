@@ -1,3 +1,5 @@
+import os
+
 import dill
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.linear_model import MultiTaskElasticNet
@@ -14,6 +16,8 @@ from avaml.machine.meta.generate_setups import setup, regobs_types
 from avaml.machine import DILL_VERSION, AlreadyFittedError
 
 expected_errors = (NoBulletinWithinRangeError, DatasetMissingLabel, NoDataFoundError)
+
+root = f"{os.path.dirname(os.path.abspath(__file__))}/../../.."
 
 def createClustering():
     dt = DecisionTreeClassifier(max_depth=7, class_weight={})
@@ -43,58 +47,54 @@ class MetaMachine:
         self.f1 = None
         self.fitted = False
 
-    def fit(self, seasons=('2017-18', '2018-19', '2019-20')):
+    def fit(self, seasons=['2019-20'], season_train='2018-19'):
         if self.fitted:
             raise AlreadyFittedError()
         self.fitted = True
         fd_noregobs = ForecastDataset(regobs_types=[], seasons=seasons)
         fd_regobs = ForecastDataset(regobs_types=regobs_types, seasons=seasons)
+        fd_noregobs_test = ForecastDataset(regobs_types=[], seasons=[season_train])
+        fd_regobs_test = ForecastDataset(regobs_types=regobs_types, seasons=[season_train])
 
         for days, varsom, regobs, temp in setup:
             if regobs:
                 labeled_data = fd_regobs.label(days=days, with_varsom=varsom)
+                test_data = fd_regobs_test.label(days=days, with_varsom=varsom)
             else:
                 labeled_data = fd_noregobs.label(days=days, with_varsom=varsom)
+                test_data = fd_noregobs_test.label(days=days, with_varsom=varsom)
 
             labeled_data = labeled_data.normalize()
             labeled_data = labeled_data.drop_regions()
+            test_data = test_data.normalize()
+            test_data = test_data.drop_regions()
             if temp:
-                labeled_data = labeled_data.stretch_temperatures()
+                test_data = test_data.stretch_temperatures()
 
             for m_tag, create_machine in [("SKClustering", createClustering), ("SKClassifier", createClassifier)]:
                 tag = f"{m_tag}_{days}_noregions_{'' if varsom else 'no'}varsom_{'-'.join(regobs)}{'_temp' if temp else ''}"
                 print(f"Training {tag}, size {labeled_data.data.shape}")
 
-
                 machine = create_machine()
                 machine.fit(labeled_data)
                 print("Saving machine")
                 self.machines[tag] = machine
-                #machine.dump(tag)
 
-                results_machine = None
-                strat = ("CLASS", "", "danger_level")
-                for split_idx, (training_data, testing_data) in enumerate(labeled_data.kfold(5, stratify=strat)):
-                    print(f"Training fold: {split_idx}")
-                    machine = create_machine()
-                    machine.fit(training_data)
+                print("Testing machine")
+                predicted_data = machine.predict(test_data)
+                results_machine = predicted_data.f1()
 
-                    print(f"Testing fold: {split_idx}")
-                    predicted_data = machine.predict(testing_data)
-                    results_series = predicted_data.f1()
-                    results_machine = results_series if results_machine is None else results_machine + (
-                            results_series - results_machine) / (split_idx + 1)
-                    if results_machine is None:
-                        results_machine = results_series
-                    else:
-                        results_machine = results_machine + (results_series - results_machine) / (split_idx + 1)
-
-                results_machine["rmse"] = -results_machine["rmse"]
+                real = results_machine.index.get_level_values(0) == "REAL"
+                # We need to "reverse" the rmse to be sorted together with f1.
+                results_machine.loc[real, "rmse"] = results_machine\
+                    .loc[real, "rmse"]\
+                    .rdiv(1, fill_value=0)\
+                    .replace(np.inf, 0)
                 f1_machine = results_machine[["f1", "rmse"]]\
                     .apply(lambda x: pd.Series(x.dropna().to_numpy()), axis=1)\
                     .squeeze()\
                     .rename(tag)
-                self.f1 = f1_machine if self.f1 is None else pd.concat([self.f1, f1_machine], axis=1)
+                self.f1 = f1_machine if self.f1 is None else pd.concat([self.f1, f1_machine], axis=1).fillna(0)
 
     def predict(self, seasons=["2020-21"], csv_tag=None):
         if csv_tag is None:
@@ -111,7 +111,8 @@ class MetaMachine:
             machine_scores.index.get_level_values(0) != "REAL"
         )]
         machine_scores = machine_scores.drop(empty_indices)
-        grouped_scores = machine_scores.groupby(level=[0, 1, 2]).min()
+        groupby = machine_scores.groupby(level=[0, 1, 2])
+        grouped_scores = groupby.mean() + groupby.min()
 
         for days, varsom, regobs, temp in setup:
             d_tag = f"{days}_noregions_{'' if varsom else 'no'}varsom_{'-'.join(regobs)}{'_temp' if temp else ''}"
@@ -145,10 +146,12 @@ class MetaMachine:
             grouped_scores.columns.values[np.argsort(-grouped_scores)],
             index=grouped_scores.index
         )
+
         ld = None
         for tag in np.unique(best_models.values.flatten()):
             print(tag)
             labeled_data = self.machines[tag].predict(all_data[tag], force_subprobs=True)
+            labeled_data.pred = labeled_data.pred.astype(str)
             predictions[tag] = labeled_data.pred
             if ld is None:
                 ld = labeled_data
@@ -164,10 +167,12 @@ class MetaMachine:
         for label in best_models.index:
             for _, tag in best_models.loc[label].items():
                 pred_tag = predictions[tag][label].replace("0", np.nan)
+                if label[1] != "":
+                    pred_tag = pred_tag.replace("", np.nan)
                 if pred is not None and label in pred.columns:
                     combined = pred[label].combine_first(pred_tag)
-                    pred = pred.reindex(pred.index.union(combined.index))
-                    pred.loc[combined.index, label] = combined
+                    pred = pred.reindex(combined.index)
+                    pred[label] = combined
                 elif pred is not None:
                     pred = pred.reindex(pred.index.union(pred_tag.index))
                     pred.loc[predictions[tag].index, label] = pred_tag
