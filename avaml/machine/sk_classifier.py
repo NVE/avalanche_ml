@@ -195,7 +195,7 @@ class SKClassifierMachine(BulletinMachine):
 
         ld = labeled_data.copy()
         ld.pred = y
-        if not force_subprobs:
+        if force_subprobs:
             return ld
         else:
             return ld.valid_pred()
