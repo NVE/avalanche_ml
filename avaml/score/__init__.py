@@ -91,19 +91,19 @@ class Score:
         self.pred_vectors = to_vec(labeled_data.pred)
 
     def calc(self):
+        weights = np.array([0.20535988, 0.0949475, 1.])
         diff_cols = [not re.match(r"^(lev_)|(aspect)", col) for col in self.label_vectors.columns.get_level_values(1)]
         diff = self.pred_vectors.loc[:, diff_cols] - self.label_vectors.loc[:, diff_cols]
-        p_score_cols = pd.MultiIndex.from_tuples([(_NONE, "problem_score")]).append(
+        p_score_cols = pd.MultiIndex.from_tuples([("global", "problem_score")]).append(
             pd.MultiIndex.from_product([[f"problem_{n}" for n in range(1, 4)], ["spatial_diff"]])
         )
         p_score = pd.DataFrame(index=diff.index, columns=p_score_cols)
         for idx, series in self.label_vectors.iterrows():
             problem_score, spatial_diffs = dist(series, self.pred_vectors.loc[idx])
             p_score.loc[idx] = np.array([problem_score] + spatial_diffs)
-        weights = np.array([1, 1, 1])
         maxdist = np.power(weights, 2).sum()
         score = np.power(
-            pd.concat([diff.iloc[:, :2], p_score[[("", "problem_score")]]], axis=1).astype(np.float) * weights,
+            pd.concat([diff.iloc[:, :2], p_score[[("global", "problem_score")]]], axis=1).astype(np.float) * weights,
             2
         ).sum(axis=1)
         score = pd.DataFrame(
@@ -125,7 +125,7 @@ def dist(score1, score2):
 
         diff = np.append(vec1.iloc[:3] - vec2.iloc[:3], [spatial_diff])
         # With two valid forecasts, compute a weighted euclidean norm.
-        norm = np.linalg.norm((diff) * np.array([1, 1, 1, 0.5]))
+        norm = np.linalg.norm(diff * np.array(p_weights))
         return norm, spatial_diff
 
     def mindist(vec1, vecs):
@@ -136,10 +136,11 @@ def dist(score1, score2):
                 mindist = dist
         return mindist if mindist is not None else 0
 
-    maxdist = np.linalg.norm(np.array([1, 1, 1, 0.5]))
+    weights = [3, 2, 1]
+    p_weights = [0.14674636, 0.18210977, 1., 0.25010303]
+    maxdist = np.linalg.norm(np.array(p_weights))
     distance = 0
     prob_cols = [f"problem_{n}" for n in range(1, 4)]
-    weights = [3, 2, 1]
     spatial_diffs = []
     for prob_n, weight in zip(prob_cols, weights):
         norm, spatial_diff = distvec(score1[prob_n], score2[prob_n])
