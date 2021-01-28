@@ -8,11 +8,9 @@ from sklearn.tree import export_graphviz
 
 from avaml import setenvironment as se, _NONE
 from avaml.aggregatedata import DatasetMissingLabel
-from avaml.machine import BulletinMachine, AlreadyFittedError
+from avaml.machine import BulletinMachine, AlreadyFittedError, DILL_VERSION
 
 __author__ = 'arwi'
-
-DILL_VERSION = '3'
 
 class SKClusteringMachine(BulletinMachine):
     def __init__(

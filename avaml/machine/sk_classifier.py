@@ -6,11 +6,9 @@ import dill
 
 from avaml import _NONE, setenvironment as se
 from avaml.aggregatedata import DatasetMissingLabel
-from avaml.machine import BulletinMachine, AlreadyFittedError, NotFittedError
+from avaml.machine import BulletinMachine, AlreadyFittedError, NotFittedError, DILL_VERSION
 
 __author__ = 'arwi'
-
-DILL_VERSION = '3'
 
 class SKClassifierMachine(BulletinMachine):
     def __init__(

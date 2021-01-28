@@ -2,6 +2,7 @@ __author__ = 'arwi'
 
 from avaml import Error
 
+DILL_VERSION = '4'
 
 class BulletinMachine:
     def __init__(self):
