@@ -462,7 +462,7 @@ class LabeledData:
             if "lev_fill" in ld.pred["CLASS", subprob].columns:
                 fill = ld.pred.astype(str)["CLASS", subprob, "lev_fill"]
                 if "lev_min" in ld.pred["REAL", subprob]:
-                    ld.pred.loc[np.logical_or(fill == "3", fill == "4"), ("REAL", subprob, "lev_min")] = "0"
+                    ld.pred.loc[np.logical_or(fill == "1", fill == "2"), ("REAL", subprob, "lev_min")] = "0"
             if "lev_min" in ld.pred["REAL", subprob] and "lev_max" in ld.pred["REAL", subprob]:
                 real = ld.pred["REAL", subprob].replace("", np.nan).astype(np.float)
                 reversed_idx = real["lev_min"] > real["lev_max"]
@@ -470,7 +470,8 @@ class LabeledData:
                 ld.pred.loc[reversed_idx, ("REAL", subprob, "lev_min")] = average
                 ld.pred.loc[reversed_idx, ("REAL", subprob, "lev_max")] = average
 
-        ld.pred = ld.pred.astype(str)
+        ld.pred.loc[:, ["CLASS", "MULTI"]] = ld.pred.loc[:, ["CLASS", "MULTI"]].astype(str)
+        ld.pred["REAL"] = ld.pred["REAL"].replace("", np.nan).astype(np.float)
         return ld
 
     def f1(self):
