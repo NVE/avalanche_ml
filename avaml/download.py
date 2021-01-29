@@ -1,3 +1,4 @@
+import math
 import os
 import pickle
 import re
@@ -94,16 +95,16 @@ AVALANCHE_PROBLEM = {
     "lev_max": ("exposed_height_1", lambda x: x),
     "lev_min": ("exposed_height_2", lambda x: x),
     "cause_new-snow": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'new-snow')),
-    "cause_hoar": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'cause_hoar')),
-    "cause_facet": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'cause_facet')),
-    "cause_crust": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'cause_crust')),
-    "cause_snowdrift": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'cause_snowdrift')),
-    "cause_ground-facet": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'cause_ground-facet')),
-    "cause_crust-above-facet": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'cause_crust-above-facet')),
-    "cause_crust-below-facet": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'cause_crust-below-facet')),
-    "cause_ground-water": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'cause_ground-water')),
-    "cause_water-layers": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'cause_water-layers')),
-    "cause_loose": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'cause_loose')),
+    "cause_hoar": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'hoar')),
+    "cause_facet": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'facet')),
+    "cause_crust": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'crust')),
+    "cause_snowdrift": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'snowdrift')),
+    "cause_ground-facet": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'ground-facet')),
+    "cause_crust-above-facet": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'crust-above-facet')),
+    "cause_crust-below-facet": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'crust-below-facet')),
+    "cause_ground-water": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'ground-water')),
+    "cause_water-layers": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'water-layers')),
+    "cause_loose": ("aval_cause_id", lambda x: float(CAUSES.get(x, _NONE) == 'loose')),
     "lev_fill_1": ("exposed_height_fill", lambda x: float(x == 1)),
     "lev_fill_2": ("exposed_height_fill", lambda x: float(x == 2)),
     "lev_fill_3": ("exposed_height_fill", lambda x: float(x == 3)),
@@ -572,6 +573,10 @@ def _get_weather_obs(year, date=None, days=None, max_file_age=23):
             date_region = (forecast.date_valid.isoformat(), forecast.region_id)
             weather_varsom[key][date_region] = mapper(getattr(forecast.mountain_weather, orig_key))
 
+    # We prioritize APS before the Varsom data.
+    # Varsom is manually adjusted by a professional,
+    # but by the time we download it, the data will be
+    # 18-24 h old.
     return merge(weather_varsom, weather_api)
 
 
