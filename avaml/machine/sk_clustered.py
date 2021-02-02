@@ -7,7 +7,7 @@ from sklearn.metrics import pairwise_distances
 from sklearn.tree import export_graphviz
 
 from avaml import setenvironment as se, _NONE
-from avaml.aggregatedata import DatasetMissingLabel
+from avaml.aggregatedata.__init__ import DatasetMissingLabel
 from avaml.machine import BulletinMachine, AlreadyFittedError, DILL_VERSION
 
 __author__ = 'arwi'

@@ -1,7 +1,9 @@
-from sklearn.cluster import AgglomerativeClustering
-import pandas as pd
+import re
 
-from avaml.aggregatedata import ForecastDataset, LabeledData, CsvMissingError
+import pandas as pd
+from sklearn.cluster import AgglomerativeClustering
+
+from avaml.aggregatedata.__init__ import ForecastDataset, LabeledData, CsvMissingError
 from sklearn.tree import DecisionTreeClassifier
 
 from avaml.machine.sk_clustered import SKClusteringMachine
@@ -10,12 +12,11 @@ train_seasons = ["2018-19", "2019-20"]
 test_seasons = ["2017-18"]
 
 model_prefix = ''
-days = 2
+days = 7
 regobs_types = [
     "Faretegn",
     "Tester",
     "Skredaktivitet",
-    "Skredhendelse",
     "Snødekke",
     "Skredproblem",
     "Skredfarevurdering"
@@ -38,8 +39,15 @@ except CsvMissingError:
     testing_data.to_csv()
 
 
+print("Removing 'cause' columns")
+training_data.data = training_data.data.loc[:, [not re.search(r"cause", col) for col in training_data.data.columns.get_level_values(0)]]
+testing_data.data = testing_data.data.loc[:, [not re.search(r"cause", col) for col in testing_data.data.columns.get_level_values(0)]]
+print("Collapsing timeseries")
+training_data = training_data.to_time_parameters(orig_days=1)
+testing_data = testing_data.to_time_parameters(orig_days=1)
+print("normalizing")
 training_data = training_data.normalize()
-testing_data = testing_data.normalize()
+testing_data = testing_data.normalize(by=training_data)
 
 f1 = None
 importances = None
