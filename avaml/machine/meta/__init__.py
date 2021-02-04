@@ -43,10 +43,12 @@ def createClassifier():
     )
 
 class MetaMachine:
-    def __init__(self):
+    def __init__(self, with_varsom=True, stretch_temp=None):
         self.machines = {}
         self.f1 = None
         self.fitted = False
+        self.with_varsom = with_varsom
+        self.stretch_temp = stretch_temp
 
     def fit(self, seasons=['2019-20'], season_train='2018-19'):
         if self.fitted:
@@ -58,6 +60,13 @@ class MetaMachine:
         fd_regobs_test = ForecastDataset(regobs_types=regobs_types, seasons=[season_train])
 
         for days, varsom, regobs, temp in setup:
+            if varsom and not self.with_varsom:
+                continue
+            if temp and self.stretch_temp is not None and not self.stretch_temp:
+                continue
+            if not temp and self.stretch_temp:
+                continue
+
             if regobs:
                 labeled_data = fd_regobs.label(days=days, with_varsom=varsom)
                 test_data = fd_regobs_test.label(days=days, with_varsom=varsom)
@@ -126,6 +135,13 @@ class MetaMachine:
         grouped_scores = groupby.mean() + groupby.min()
 
         for days, varsom, regobs, temp in setup:
+            if varsom and not self.with_varsom:
+                continue
+            if temp and self.stretch_temp is not None and not self.stretch_temp:
+                continue
+            if not temp and self.stretch_temp:
+                continue
+
             d_tag = f"{days}_noregions_{'' if varsom else 'no'}varsom_{'-'.join(regobs)}{'_temp' if temp else ''}"
             print(d_tag)
             try:
