@@ -6,7 +6,7 @@ sys.path.insert(0, root)
 
 from avaml.machine.meta import MetaMachine
 
-id = "meta_mean_train-2019-20_test-2018-19"
+id = "meta_meanmin_stdscale_train-2019-20_test-2018-19"
 
 print("Initializing")
 meta_model = MetaMachine()

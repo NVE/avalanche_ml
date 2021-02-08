@@ -7,10 +7,11 @@ import datetime as dt
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import StandardScaler
 
-from avaml import Error, varsomdata, setenvironment as se, _NONE, CSV_VERSION, REGIONS, merge
-from avaml.download import _get_varsom_obs, _get_weather_obs, _get_regobs_obs, REG_ENG, PROBLEMS
+from avaml import Error, setenvironment as se, _NONE, CSV_VERSION, REGIONS, merge
+from avaml.aggregatedata.download import _get_varsom_obs, _get_weather_obs, _get_regobs_obs, REG_ENG, PROBLEMS
+from avaml.aggregatedata.time_parameters import to_time_parameters
 from varsomdata import getforecastapi as gf
 from varsomdata import getmisc as gm
 
@@ -322,7 +323,7 @@ class ForecastDataset:
 
 class LabeledData:
     is_normalized = False
-    scaler = MinMaxScaler()
+    scaler = StandardScaler()
 
     def __init__(self, data, label, row_weight, days, regobs_types, with_varsom, seasons=False):
         """Holds labels and features.
@@ -374,17 +375,20 @@ class LabeledData:
         self.seasons = sorted(list(set(seasons if seasons else [])))
         self.with_regions = True
 
-    def normalize(self):
+    def normalize(self, by=None):
         """Normalize the data feature-wise using MinMax.
 
         :return: Normalized copy of LabeledData
         """
+        by = by if by is not None else self
         if not self.is_normalized:
             ld = self.copy()
-            data = ld.scaler.transform(self.data.values)
+            data = by.scaler.transform(self.data.values)
             ld.data = pd.DataFrame(data=data, index=self.data.index, columns=self.data.columns)
-            ld.is_normalized = True
+            ld.is_normalized = by
             return ld
+        elif self.is_normalized != by:
+            return self.denormalize().normalize(by=by)
         else:
             return self.copy()
 
@@ -395,7 +399,7 @@ class LabeledData:
         """
         if self.is_normalized:
             ld = self.copy()
-            data = ld.scaler.inverse_transform(self.data.values)
+            data = self.is_normalized.scaler.inverse_transform(self.data.values)
             ld.data = pd.DataFrame(data=data, index=self.data.index, columns=self.data.columns)
             ld.is_normalized = False
             return ld
@@ -551,6 +555,17 @@ class LabeledData:
         ts_array[:, len(REGIONS) * number_of_days - 1:] = self.data.values[:, len(REGIONS) - 1:]
         ts_array = ts_array.reshape((shape[0], number_of_features, number_of_days))
         return ts_array.transpose((0, 2, 1)), columns
+
+    def to_time_parameters(self, orig_days=-1):
+        """Collapses the time series to fewer dimensions"""
+        ld = self.copy()
+        ld.data = pd.concat([
+            ld.data.loc[:, ld.data.columns.get_level_values(1).values.astype(int) <= orig_days],
+            to_time_parameters(ld)
+        ], axis=1).sort_index()
+        ld.scaler = StandardScaler()
+        ld.scaler.fit(ld.data.values)
+        return ld
 
     def to_dummies(self):
         """Convert categorical variable into dummy/indicator variables.

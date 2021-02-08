@@ -1,11 +1,9 @@
-import re
-
 import numpy as np
 import pandas as pd
 import dill
 
 from avaml import _NONE, setenvironment as se
-from avaml.aggregatedata import DatasetMissingLabel
+from avaml.aggregatedata.__init__ import DatasetMissingLabel
 from avaml.machine import BulletinMachine, AlreadyFittedError, NotFittedError, DILL_VERSION
 
 __author__ = 'arwi'

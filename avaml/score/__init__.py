@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 
 from avaml import _NONE
-from avaml.aggregatedata import DatasetMissingLabel
+from avaml.aggregatedata.__init__ import DatasetMissingLabel
 from avaml.score.overlap import calc_overlap
 
 __author__ = 'arwi'
