@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """Structures data in ML-friendly ways."""
-
 import re
 import copy
 import datetime as dt
+import random
 
 import numpy as np
 import pandas as pd
@@ -477,6 +477,40 @@ class LabeledData:
         ld.pred.loc[:, ["CLASS", "MULTI"]] = ld.pred.loc[:, ["CLASS", "MULTI"]].astype(str)
         ld.pred["REAL"] = ld.pred["REAL"].replace("", np.nan).astype(np.float)
         return ld
+
+    def split(self, rounds=3, seed="Njunis"):
+        """Returns a split of the object into a training set, a test set and a validation set.
+
+        Use as:
+            for test, train, eval in ld.split():
+                model.fit(test)
+                model.predict(train)
+                model.predict(eval)
+        """
+        rand = random.Random(seed)
+
+        result = []
+        for _ in range(0, rounds):
+            troms = rand.sample([3006, 3007, 3009, 3010, 3011, 3012, 3013], k=7)
+            nordland = rand.sample([3014, 3015, 3016, 3017], k=4)
+            south = rand.sample([3022, 3023, 3024, 3027, 3028, 3029, 3031, 3032, 3034, 3035, 3037], k=11)
+
+            train_regions = troms[2:] + nordland[2:] + south[2:]
+            test_regions = [troms[0], nordland[0], south[0]]
+            eval_regions = [troms[1], nordland[1], south[1]]
+
+            split = []
+            for regions in [train_regions, test_regions, eval_regions]:
+                ld = self.copy()
+                ld.data = ld.data.iloc[[region in regions for region in ld.data.index.get_level_values(1)]]
+                ld.label = ld.label.iloc[[region in regions for region in ld.label.index.get_level_values(1)]]
+                ld.pred = ld.pred.iloc[[region in regions for region in ld.pred.index.get_level_values(1)]]
+                ld.row_weight = ld.row_weight.iloc[[region in regions for region in ld.row_weight.index.get_level_values(1)]]
+                split.append(ld)
+            result.append(tuple(split))
+
+        return result
+
 
     def f1(self):
         """Get F1, precision, recall and RMSE of all labels.
