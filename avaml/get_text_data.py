@@ -145,7 +145,7 @@ LABEL_GLOBAL = {
 COMPETENCE = [0, 110, 115, 120, 130, 150]
 
 
-class ForecastDataset:
+class TextDataset:
 
     def __init__(self, regobs_types, seasons=('2017-18', '2018-19', '2019-20'), max_file_age=23):
         """
@@ -161,16 +161,29 @@ class ForecastDataset:
         self.varsom = {}
         self.labels = {}
         self.use_label = True
+        self.text = {}
 
+        print("Fetching online data. (This may take a long time.)")
         for season in seasons:
+            print('    Getting data for season: {}'.format(season))
             varsom, labels = _get_varsom_obs(year=season, max_file_age=max_file_age)
+            
+            # need to isolate text element before merging varsom
+            text = varsom['main_text']
+            self.text = merge(self.text, text)
+            varsom.pop('main_text')
             self.varsom = merge(self.varsom, varsom)
+            
             self.labels = merge(self.labels, labels)
             regobs = _get_regobs_obs(season, regobs_types, max_file_age=max_file_age)
             self.regobs = merge(self.regobs, regobs)
             weather = _get_weather_obs(season, max_file_age=max_file_age)
             self.weather = merge(self.weather, weather)
-
+         
+        # we need to have a key for the main dictionary in order to load it into a dataframe
+        self.text = {'main_text': self.text}
+        print('Done!\n')
+        
     @staticmethod
     def date(regobs_types, date: dt.date, days, use_label=True):
         """
@@ -201,6 +214,7 @@ class ForecastDataset:
     def label(self, days, with_varsom=True):
         """Creates a LabeledData containing relevant label and features formatted either in a flat structure or as
         a time series.
+
         :param days:            How far back in time values should data be included.
                                 If 0, only weather data for the forecast day is evaluated.
                                 If 1, day 0 is used for weather, 1 for Varsom.
@@ -210,9 +224,12 @@ class ForecastDataset:
                                 The reason for this is to make sure that each kind of data contain
                                 the same number of data points, if we want to use some time series
                                 frameworks that are picky about such things.
+
         :param with_varsom:      Whether to include previous avalanche bulletins into the indata.
+
         :return:                LabeledData
         """
+        print('Creating labeled dataset.')
         table = {}
         row_weight = {}
         df = None
@@ -221,8 +238,10 @@ class ForecastDataset:
         days_w = {0: 1, 1: 1, 2: 1}.get(days, days - 1)
         days_v = {0: 1, 1: 2, 2: 2}.get(days, days)
         days_r = days + 1
+        days_t = days + 1
         varsom_index = pd.DataFrame(self.varsom).index
         weather_index = pd.DataFrame(self.weather).index
+        text_index = pd.DataFrame(self.text).index
 
         if len(df_label.index) == 0 and self.use_label:
             raise NoBulletinWithinRangeError()
@@ -246,9 +265,15 @@ class ForecastDataset:
                     for n in range(1, days_v):
                         if prev_key(n) not in varsom_index:
                             raise KeyError()
+                            
                 for n in range(0, days_w):
                     if prev_key(n) not in weather_index:
                         raise KeyError()
+                        
+                for n in range(0, days_t):
+                    if prev_key(n) not in text_index:
+                        raise KeyError()      
+                
                 add_row = True
                 # We don't check for RegObs as it is more of the good to have type of data
             except KeyError:
@@ -270,6 +295,7 @@ class ForecastDataset:
                             row[(column, str(n))] = self.weather[column][prev_key(n)]
                         except KeyError:
                             row[(column, str(n))] = 0
+                            
                 for column in self.regobs.keys():
                     for n in range(2, days_r):
                         try:
@@ -307,23 +333,25 @@ class ForecastDataset:
 
         if self.use_label:
             df_label = df_label.loc[df.index]
-
             df_label.sort_index(axis=0, inplace=True)
             df_label.sort_index(axis=1, inplace=True)
             df.sort_index(axis=0, inplace=True)
             df_weight.sort_index(axis=0, inplace=True)
         else:
             df_label = None
-
-        return LabeledData(df, df_label, df_weight, days, self.regobs_types, with_varsom, self.seasons)
+        
+        df_text = pd.DataFrame(self.text)
+        print('Done!')
+        return LabeledData(df, df_label, df_text, df_weight, days, self.regobs_types, with_varsom, self.seasons)
 
 
 class LabeledData:
     is_normalized = False
     scaler = MinMaxScaler()
 
-    def __init__(self, data, label, row_weight, days, regobs_types, with_varsom, seasons=False):
+    def __init__(self, data, label, text, row_weight, days, regobs_types, with_varsom, seasons=False):
         """Holds labels and features.
+
         :param data:            A DataFrame containing the features of the dataset.
         :param label:           DataFrame of labels.
         :param row_weight:      Series containing row weights
@@ -341,6 +369,7 @@ class LabeledData:
         :param with_varsom:      Whether to include previous avalanche bulletins into the indata.
         """
         self.data = data
+        self.main_text = text
         self.row_weight = row_weight
         if label is not None:
             self.label = label
@@ -372,6 +401,7 @@ class LabeledData:
 
     def normalize(self):
         """Normalize the data feature-wise using MinMax.
+
         :return: Normalized copy of LabeledData
         """
         if not self.is_normalized:
@@ -385,6 +415,7 @@ class LabeledData:
 
     def denormalize(self):
         """Denormalize the data feature-wise using MinMax.
+
         :return: Denormalized copy of LabeledData
         """
         if self.is_normalized:
@@ -407,91 +438,10 @@ class LabeledData:
         else:
             return self.copy()
 
-    def kfold(self, k=5, shuffle=True, stratify=None):
-        """Returns an iterable of LabeledData-tuples. The first element is the training dataset
-        and the second is for testing.
-        :param k: Int: Number of folds.
-        :param shuffle: Bool: Whether rows should be shuffled before folding. Defaults to True.
-        :return: Iterable<(LabeledData, LabeledData)>
-        """
-        if self.label is None or self.pred is None:
-            raise DatasetMissingLabel()
-        if stratify is None:
-            kf = KFold(n_splits=k, shuffle=shuffle)
-            split = kf.split(self.data)
-        else:
-            kf = StratifiedKFold(n_splits=k, shuffle=shuffle)
-            split = kf.split(self.data, self.label[stratify])
-        array = []
-        for train_index, test_index in split:
-            training_data = self.copy()
-            training_data.data = training_data.data.iloc[train_index]
-            training_data.label = training_data.label.iloc[train_index]
-            training_data.pred = training_data.pred.iloc[train_index]
-            training_data.row_weight = training_data.row_weight.iloc[train_index]
-            testing_data = self.copy()
-            testing_data.data = testing_data.data.iloc[test_index]
-            testing_data.label = testing_data.label.iloc[test_index]
-            testing_data.pred = testing_data.pred.iloc[test_index]
-            testing_data.row_weight = testing_data.row_weight.iloc[test_index]
-            array.append((training_data, testing_data))
-        return array
-
-    def f1(self):
-        """Get F1, precision, recall and RMSE of all labels.
-        :return: Series with scores of all possible labels and values.
-        """
-        if self.label is None or self.pred is None:
-            raise DatasetMissingLabel()
-
-        dummies = self.to_dummies()
-        old_settings = np.seterr(divide='raise', invalid='raise')
-
-        class_types = []
-        for typ in ["CLASS", "MULTI"]:
-            if typ in dummies["label"].columns.get_level_values(0):
-                class_types.append(typ)
-
-        df = None
-        if len(class_types):
-            truth = dummies["label"][class_types]
-            pred = dummies["pred"][class_types]
-            true_pos = np.sum(truth * pred, axis=0)
-            try:
-                prec = true_pos / np.sum(pred, axis=0)
-            except FloatingPointError:
-                prec = pd.Series(index=pred.columns)
-            try:
-                recall = true_pos / np.sum(truth, axis=0)
-            except FloatingPointError:
-                recall = pd.Series(index=pred.columns)
-            try:
-                f1 = 2 * prec * recall / (prec + recall)
-            except FloatingPointError:
-                f1 = pd.Series(index=pred.columns)
-
-            df = pd.DataFrame(index=truth.columns, columns=['f1', 'precision', 'recall', 'rmse'])
-            df.iloc[:, :3] = np.array([f1, prec, recall]).transpose()
-            df[['f1', 'precision', 'recall']] = df[['f1', 'precision', 'recall']].fillna(0)
-
-        if "REAL" in dummies["label"].columns.get_level_values(0):
-            truth = dummies["label"][["REAL"]]
-            pred = dummies["pred"][["REAL"]]
-            try:
-                ntruth = (truth - truth.min(axis=0)) / (truth.max(axis=0) - truth.min(axis=0))
-                npred = (pred - pred.min(axis=0)) / (pred.max(axis=0) - pred.min(axis=0))
-                rmse = (np.sqrt(np.sum(np.square(npred - ntruth), axis=0)) / ntruth.shape[0])
-            except Exception:
-                rmse = np.nan
-            rmse = pd.Series(rmse, index=truth.columns)
-            df = rmse if df is None else pd.concat([df, rmse])
-            np.seterr(**old_settings)
-
-        return df
-
     def to_timeseries(self):
         """Formats the data in a way that is parseable for e.g. `tslearn`. That is, a numpy array with
         shape `(rows, timeseries, features)`.
+
         :return: (numpy.ndarray, list of feature names)
         """
         columns = self.data.columns.get_level_values(0).unique()
@@ -509,6 +459,7 @@ class LabeledData:
 
     def to_dummies(self):
         """Convert categorical variable into dummy/indicator variables.
+
         :return: pd.DataFrame
         """
         if self.label is None:
@@ -638,6 +589,7 @@ class LabeledData:
 
     def to_aw(self):
         """Convert predictions to AvalancheWarnings.
+
         :return: AvalancheWarning[]
         """
         if self.label is None or self.pred is None:
@@ -704,11 +656,12 @@ class LabeledData:
         ld = LabeledData(
             self.data.copy(deep=True),
             self.label.copy(deep=True) if self.label is not None else None,
+            self.main_text.copy(deep=True),
             self.row_weight.copy(deep=True),
             self.days,
             copy.copy(self.regobs_types),
             self.with_varsom,
-            self.seasons
+            self.seasons,
         )
         ld.is_normalized = self.is_normalized
         ld.scaler = self.scaler
@@ -718,6 +671,7 @@ class LabeledData:
     @staticmethod
     def from_csv(days, regobs_types, seasons=('2017-18', '2018-19', '2019-20'), with_varsom=True, tag=""):
         """Read LabeledData from previously written .csv-file.
+
         :param days:            How far back in time values should data be included.
         :param regobs_types:    A tuple/list of strings of types of observations to fetch from RegObs.,
                                 e.g., `("Faretegn")`.
