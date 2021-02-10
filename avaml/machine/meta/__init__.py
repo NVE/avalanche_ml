@@ -1,4 +1,5 @@
 import os
+import re
 
 import dill
 from sklearn.cluster import AgglomerativeClustering
@@ -7,8 +8,8 @@ from sklearn.tree import DecisionTreeClassifier
 import pandas as pd
 import numpy as np
 
-from avaml import Error, setenvironment as se
-from avaml.aggregatedata import CsvMissingError, LabeledData, ForecastDataset, NoBulletinWithinRangeError, \
+from avaml import setenvironment as se
+from avaml.aggregatedata.__init__ import LabeledData, ForecastDataset, NoBulletinWithinRangeError, \
     DatasetMissingLabel, NoDataFoundError
 from avaml.machine.sk_classifier import SKClassifierMachine
 from avaml.machine.sk_clustered import SKClusteringMachine
@@ -30,7 +31,7 @@ def createClassifier():
         return DecisionTreeClassifier(max_depth=7, class_weight=class_weight)
 
     def regressor_creator(indata, outdata):
-        return MultiTaskElasticNet()
+        return MultiTaskElasticNet(max_iter=3000)
 
     return SKClassifierMachine(
         classifier_creator,
@@ -42,10 +43,12 @@ def createClassifier():
     )
 
 class MetaMachine:
-    def __init__(self):
+    def __init__(self, with_varsom=True, stretch_temp=None):
         self.machines = {}
         self.f1 = None
         self.fitted = False
+        self.with_varsom = with_varsom
+        self.stretch_temp = stretch_temp
 
     def fit(self, seasons=['2019-20'], season_train='2018-19'):
         if self.fitted:
@@ -57,6 +60,13 @@ class MetaMachine:
         fd_regobs_test = ForecastDataset(regobs_types=regobs_types, seasons=[season_train])
 
         for days, varsom, regobs, temp in setup:
+            if varsom and not self.with_varsom:
+                continue
+            if temp and self.stretch_temp is not None and not self.stretch_temp:
+                continue
+            if not temp and self.stretch_temp:
+                continue
+
             if regobs:
                 labeled_data = fd_regobs.label(days=days, with_varsom=varsom)
                 test_data = fd_regobs_test.label(days=days, with_varsom=varsom)
@@ -64,12 +74,22 @@ class MetaMachine:
                 labeled_data = fd_noregobs.label(days=days, with_varsom=varsom)
                 test_data = fd_noregobs_test.label(days=days, with_varsom=varsom)
 
-            labeled_data = labeled_data.normalize()
-            labeled_data = labeled_data.drop_regions()
-            test_data = test_data.normalize()
-            test_data = test_data.drop_regions()
+            labeled_data.data = labeled_data.data.loc[
+                 :, [not re.search(r"cause", col) for col in labeled_data.data.columns.get_level_values(0)]
+            ]
+            test_data.data = test_data.data.loc[
+                :, [not re.search(r"cause", col) for col in test_data.data.columns.get_level_values(0)]
+            ]
             if temp:
+                labeled_data = labeled_data.stretch_temperatures()
                 test_data = test_data.stretch_temperatures()
+            labeled_data = labeled_data.drop_regions()
+            test_data = test_data.drop_regions()
+            if days > 2:
+                labeled_data = labeled_data.to_time_parameters(orig_days=1)
+                test_data = test_data.to_time_parameters(orig_days=1)
+            labeled_data = labeled_data.normalize()
+            test_data = test_data.normalize(by=labeled_data)
 
             for m_tag, create_machine in [("SKClustering", createClustering), ("SKClassifier", createClassifier)]:
                 tag = f"{m_tag}_{days}_noregions_{'' if varsom else 'no'}varsom_{'-'.join(regobs)}{'_temp' if temp else ''}"
@@ -115,6 +135,13 @@ class MetaMachine:
         grouped_scores = groupby.mean() + groupby.min()
 
         for days, varsom, regobs, temp in setup:
+            if varsom and not self.with_varsom:
+                continue
+            if temp and self.stretch_temp is not None and not self.stretch_temp:
+                continue
+            if not temp and self.stretch_temp:
+                continue
+
             d_tag = f"{days}_noregions_{'' if varsom else 'no'}varsom_{'-'.join(regobs)}{'_temp' if temp else ''}"
             print(d_tag)
             try:

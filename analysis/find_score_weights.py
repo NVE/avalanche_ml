@@ -3,7 +3,7 @@ Find what weights to use in the Score class to create a balanced metric.
 """
 import math
 
-from avaml.aggregatedata import LabeledData, CsvMissingError, ForecastDataset
+from avaml.aggregatedata.__init__ import LabeledData, CsvMissingError, ForecastDataset
 from avaml.score import Score, calc_overlap, dist
 import pandas as pd
 import numpy as np

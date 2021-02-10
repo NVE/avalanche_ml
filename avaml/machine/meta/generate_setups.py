@@ -34,7 +34,6 @@ regobs_types = [
     "Faretegn",
     "Tester",
     "Skredaktivitet",
-    "Skredhendelse",
     "Snødekke",
     "Skredproblem",
     "Skredfarevurdering"

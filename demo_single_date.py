@@ -1,6 +1,6 @@
 from sklearn.cluster import AgglomerativeClustering
 
-from avaml.aggregatedata import ForecastDataset, LabeledData, CsvMissingError
+from avaml.aggregatedata.__init__ import ForecastDataset, LabeledData, CsvMissingError
 from sklearn.tree import DecisionTreeClassifier
 
 from avaml.machine.sk_clustered import SKClusteringMachine
