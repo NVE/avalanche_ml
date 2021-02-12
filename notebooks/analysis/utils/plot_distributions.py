@@ -274,6 +274,95 @@ def plot_season_problems(labels, col_list):
 #######################
 #######################
 
+def plot_region_weather(means, col_list):
+    """
+    Plot the distribution of values in the labels for a different column.
+    
+    Arguments:
+       means(DataFrame): pandas dataframe object containing the means for each column
+       col_list(list): the list of columns related to weather in the input data set
+       
+    Note:
+        This method has hard coded six columns.
+       
+    Returns:
+       None
+    """
+    row, col = 0, 0
+
+    plot_kwargs = {
+        "alpha": 0.8,
+        "rwidth":0.95,
+        "bins":50,
+    }
+
+    fig, ax = plt.subplots(2, 3, figsize=(16, 12))
+
+    for i, column in enumerate(col_list):
+        ax[row, col].hist(means[column], color='tab:blue', **plot_kwargs)
+
+        ax[row, col].set_xlabel(' ')
+        ax[row, col].set_title(column)
+
+        # update row and column for to move to next plot
+        if(col < 2):
+            col += 1
+        else: 
+            col = 0
+
+        if((i+1) % 3 == 0 and i > 0):
+            row += 1
+
+    ax[0, 0].set_ylabel('Count')
+    ax[1, 0].set_ylabel('Count')
+    plt.show()
+    
+    
+def plot_spatial_means(geo_means, col_list, map_regions):
+    """
+    Plot the mean values for each column in col_list for each region in geo_means.
+    
+    Arguments:
+       geo_means(GeoDataFrame): geopandas dataframe object containing the means for each column
+       col_list(list): the list of columns related to weather in the input data set
+       map_regions(GeoDataFrame): contains the region ids, name of the region, and the Polygon for all regions
+       
+    Note:
+        This method has hard coded six columns.
+       
+    Returns:
+       None
+    """
+    row, col = 0, 0
+
+    fig, ax = plt.subplots(2, 3, figsize=(14, 14))
+
+    for i, column in enumerate(col_list):
+        map_regions.plot(facecolor='grey', edgecolor='k', alpha=0.5, linewidth=2.0, ax=ax[row, col])
+        geo_means.plot(column=column, legend=True, cmap='Blues', ax=ax[row, col])
+
+        ax[row, col].set_title(column)
+        ax[row, col].set_xlabel(' ')
+        ax[row, col].set_title(column)
+
+        # update row and column for to move to next plot
+        if(col < 2):
+            col += 1
+        else: 
+            col = 0
+
+        if((i+1) % 3 == 0 and i > 0):
+            row += 1
+
+    ax[1, 0].set_xlabel('Longitude')
+    ax[1, 1].set_xlabel('Longitude')
+    ax[1, 2].set_xlabel('Longitude')
+    ax[0, 0].set_ylabel('Latitude')
+    ax[1, 0].set_ylabel('Latitude')
+
+    plt.show()
+    
+    
 def plot_region_levels(labels, idx_list, real, classes, level, how='values'):
     """
     Plot the distribution of values for the level min and max for a given avalanche problem,
