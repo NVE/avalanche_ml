@@ -1,13 +1,57 @@
 import numpy as np
 import pandas as pd
 
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as PathEffects
 from mpl_toolkits.mplot3d import Axes3D
 import seaborn as sns
 
 
-def plot_importances(df, labels, rf):
+def plot_correlations(corr, col_list, title):
+    """
+    Plot the strongest correlations between the input data and a pre-selected set
+    of labels that we are trying to predict.
+    
+    Arguments:
+        corr(DataFrame): correlation matrix from call to np.corr()
+        col_list(list): list of labels you would like to plot against input data columns
+        title(str): the type of columns you are interested looking at (dsize, trig, prob, etc.)
+    
+    Returns:
+        None
+    """
+    # first, select for the columns that we want
+    corr = corr.loc[:, col_list]
+    
+    # then, further trim down correlation matrix by selecting for only those 
+    # indices (input data columns) that are at least highly correlated with one label
+    weak_corr = [(abs(corr.loc[idx, :].values) < 0.50).all() for idx in corr.index]
+    to_drop = corr.loc[weak_corr, :].index.values
+    corr.drop(to_drop, inplace=True)
+    
+    # also drop the aspect columns from the index to shorten the correlation matrix
+    keep_rows = [val for val in corr.index.values if 'aspect' not in val]
+    corr = corr.loc[keep_rows]
+
+    Norm = mpl.colors.Normalize(vmin=-1.0, vmax=1.0)
+    #sns.set(font_scale=2)
+    tick_labels = [val[6:] for val in corr.columns]
+
+    fig, ax = plt.subplots(figsize=(10, 15))
+
+    sns.heatmap(corr,
+                xticklabels=tick_labels,
+                yticklabels=corr.index,
+                cmap='RdYlGn', norm=Norm, ax=ax,
+                cbar_kws={"pad": 0.04})
+        
+    plt.xticks(rotation=45, ha='right')
+    ax.set_title('Correlation Matrix for the {} labels'.format(title), fontsize=20)
+    plt.show()
+
+
+def plot_importances(df, labels, rf, kind, delete_aspect=False):
     """
     Input a dataframe as well as trained RandomForest model, plot feature importances.
     
@@ -18,6 +62,13 @@ def plot_importances(df, labels, rf):
     #take the top x feature importances to plot
     idx_all = np.argsort(importances_rf)
     idx_rf = np.argsort(importances_rf)[-30:]
+    important_cols = [columns[i] for i in idx_rf]
+
+    if delete_aspect:
+        # remove aspect columns to clean up plotting
+        aspect_cols = [important_cols.index(val) for val in important_cols if 'aspect' in val]
+        idx_rf = np.delete(idx_rf, aspect_cols).tolist()
+        important_cols = np.delete(important_cols, aspect_cols).tolist()
     
     fig, ax = plt.subplots(figsize=(12, 9))
     
@@ -25,9 +76,9 @@ def plot_importances(df, labels, rf):
     ax.barh(range(len(idx_rf)), importances_rf[idx_rf], color='tab:blue', align='center', alpha=0.5, label='RF')
     
     ax.set_yticks(range(len(idx_rf)))
-    ax.set_yticklabels([columns[i] for i in idx_rf], fontsize=10)
+    ax.set_yticklabels(important_cols, fontsize=10)
     ax.set_xlabel('Relative Importance')
-    ax.set_title('Largest Feature Importances')
+    ax.set_title('Largest Feature Importances, {}'.format(kind))
     ax.legend()
 
     plt.show()
