@@ -1,9 +1,11 @@
+import os
+import pickle
 import numpy as np
 import pandas as pd
 
 import sklearn
 from sklearn.model_selection import RandomizedSearchCV
-from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier
 
 from avaml.aggregatedata import ForecastDataset, LabeledData
 
@@ -113,7 +115,7 @@ def encode_aspects(l):
     return l
 
 
-def train_forest(X, y):
+def train_forest(X, y, kind):
     """
     Train a random forest regression model on input data X and labels y, then
     return the model for further processing.
@@ -121,6 +123,7 @@ def train_forest(X, y):
     Arguments:
         X(DataFrame): input data
         y(DataFrame): labels
+        kind(str): what type of labels you are training on
         
     Returns:
         forest_model(RandomForestRegressor): trained random forest models after cross-fold validation
@@ -130,7 +133,7 @@ def train_forest(X, y):
     num_iter = 10
 
     #instantiate models here
-    forest = RandomForestRegressor(random_state=random)
+    forest = RandomForestClassifier(random_state=random)
 
     #define parameters dictionaries here
     ensemble_params = {'n_estimators': [1, 2, 4, 8, 16, 32, 64, 100, 200],
@@ -153,7 +156,18 @@ def train_forest(X, y):
     )
 
     #now fit the search objects and return them
+    print('Training model on {} label(s)...'.format(kind))
     forest_model = forest_search.fit(X, y)
+    
+    #save model to ../data folder when done
+    print('Saving model...')
+    directory = os.path.join(os.getcwd(), 'models')
+    filename = 'model_{}.sav'.format(kind)
+    path = os.path.join(directory, filename)
+    
+    with open(path, 'wb') as file:
+        pickle.dump(forest_model, file)
+    
     print()
     
     return forest_model

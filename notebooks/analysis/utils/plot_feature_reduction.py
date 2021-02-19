@@ -8,13 +8,14 @@ from mpl_toolkits.mplot3d import Axes3D
 import seaborn as sns
 
 
-def plot_correlations(corr, col_list, title):
+def plot_correlations(corr, threshold, col_list, title):
     """
     Plot the strongest correlations between the input data and a pre-selected set
     of labels that we are trying to predict.
     
     Arguments:
         corr(DataFrame): correlation matrix from call to np.corr()
+        threshold(float): absolute value of the correlations you would like to filter out
         col_list(list): list of labels you would like to plot against input data columns
         title(str): the type of columns you are interested looking at (dsize, trig, prob, etc.)
     
@@ -26,7 +27,7 @@ def plot_correlations(corr, col_list, title):
     
     # then, further trim down correlation matrix by selecting for only those 
     # indices (input data columns) that are at least highly correlated with one label
-    weak_corr = [(abs(corr.loc[idx, :].values) < 0.50).all() for idx in corr.index]
+    weak_corr = [(abs(corr.loc[idx, :].values) < threshold).all() for idx in corr.index]
     to_drop = corr.loc[weak_corr, :].index.values
     corr.drop(to_drop, inplace=True)
     
@@ -51,7 +52,7 @@ def plot_correlations(corr, col_list, title):
     plt.show()
 
 
-def plot_importances(df, labels, rf, kind, delete_aspect=False):
+def plot_importances(df, rf, kind, delete_aspect=False):
     """
     Input a dataframe as well as trained RandomForest model, plot feature importances.
     
