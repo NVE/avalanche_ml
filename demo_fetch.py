@@ -1,11 +1,8 @@
 import sys
-from sklearn.cluster import AgglomerativeClustering
 
-from avaml.aggregatedata import ForecastDataset, LabeledData, CsvMissingError, DatasetMissingLabel, \
+from avaml.aggregatedata.__init__ import ForecastDataset, DatasetMissingLabel, \
     NoBulletinWithinRangeError, NoDataFoundError
-from sklearn.tree import DecisionTreeClassifier
 
-from avaml.machine.sk_clustered import SKClusteringMachine
 from datetime import date, timedelta
 
 days = 2
