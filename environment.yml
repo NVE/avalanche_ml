@@ -7,10 +7,10 @@ dependencies:
 - dill
 - geopandas
 - jupyter
+- matplotlib
 - numpy
 - pandas
-- scikit-learn
-- matplotlib
-- seaborn
 - requests
-- tensorflow-gpu=2.0
+- scikit-learn
+- seaborn
+- tensorflow-gpu
