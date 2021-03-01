@@ -1,16 +1,12 @@
-import re
-
 import numpy as np
 import pandas as pd
 import dill
 
 from avaml import _NONE, setenvironment as se
-from avaml.aggregatedata import DatasetMissingLabel
-from avaml.machine import BulletinMachine, AlreadyFittedError, NotFittedError
+from avaml.aggregatedata.__init__ import DatasetMissingLabel
+from avaml.machine import BulletinMachine, AlreadyFittedError, NotFittedError, DILL_VERSION
 
 __author__ = 'arwi'
-
-DILL_VERSION = '3'
 
 class SKClassifierMachine(BulletinMachine):
     def __init__(
@@ -157,7 +153,7 @@ class SKClassifierMachine(BulletinMachine):
         except KeyError:
             pass
 
-    def predict(self, labeled_data):
+    def predict(self, labeled_data, force_subprobs=False):
         """Predict data using supplied LabeledData.
 
         :param labeled_data: LabeledData. Dataset to predict. May have empty LabeledData.label.
@@ -174,54 +170,33 @@ class SKClassifierMachine(BulletinMachine):
         y.loc[:, y.dtypes == np.object] = _NONE
 
         y["CLASS", _NONE] = self.machines_class[""].predict(X)
-        problem_cols = []
-        for n in range(1, 4):
-            if f"problem_{n}" in list(y["CLASS", _NONE].columns):
-                problem_cols.append(("CLASS", _NONE, f"problem_{n}"))
-        prev_eq = np.zeros((y.shape[0], len(problem_cols)), dtype=bool)
-        for n, col in enumerate(problem_cols):
-            for mcol in problem_cols[1:n]:
-                # If equal to problem_n-1/2, set to _NONE (as we only have digital results).
-                prev_eq[:, n] = np.logical_or(
-                    prev_eq[:, n],
-                    np.equal(y[mcol], y[col])
-                )
-                # Set to None if problem_n-1/2 was None.
-                prev_eq[:, n] = np.logical_or(
-                    prev_eq[:, n],
-                    y[mcol] == _NONE
-                )
-            y.loc[prev_eq[:, n], col] = _NONE
 
         # Calculate relevant subproblems
         for subprob, machine in self.machines_class.items():
             if subprob == _NONE:
                 continue
-            rows = np.any(np.char.equal(y[problem_cols].values.astype("U"), subprob), axis=1)
-            if np.sum(rows):
-                pred = machine.predict(X[np.ix_(rows)])
-                classes = self.dummies_columns.to_frame().loc[pd.IndexSlice["CLASS", subprob]].iloc[:, 2].unique()
-                for n, attr in enumerate(classes):
-                    y["CLASS", subprob, attr].values[np.ix_(rows)] = pred[:, n]
+            pred = machine.predict(X)
+            classes = self.dummies_columns.to_frame().loc[pd.IndexSlice["CLASS", subprob]].iloc[:, 2].unique()
+            for n, attr in enumerate(classes):
+                y["CLASS", subprob, attr] = pred[:, n]
         for subprob, machine in self.machines_multi.items():
-            rows = np.any(np.char.equal(y[problem_cols].values.astype("U"), subprob), axis=1)
-            if np.sum(rows):
-                pred = machine.predict(X[np.ix_(rows)])
-                multis = self.dummies_columns.to_frame().loc[pd.IndexSlice["MULTI", subprob]].iloc[:, 2].unique()
-                for attr in multis:
-                    labels = pred.astype(np.int).astype("U")
-                    y["MULTI", subprob, attr].values[np.ix_(rows)] = [''.join(row) for row in labels]
+            pred = machine.predict(X)
+            multis = self.dummies_columns.to_frame().loc[pd.IndexSlice["MULTI", subprob]].iloc[:, 2].unique()
+            for attr in multis:
+                labels = pred.astype(np.int).astype("U")
+                y["MULTI", subprob, attr] = [''.join(row) for row in labels]
         for subprob, machine in self.machines_real.items():
-            rows = np.any(np.char.equal(y[problem_cols].values.astype("U"), subprob), axis=1)
-            if np.sum(rows):
-                pred = machine.predict(X[np.ix_(rows)])
-                reals = self.dummies_columns.to_frame().loc[pd.IndexSlice["REAL", subprob]].iloc[:, 2].unique()
-                for n, attr in enumerate(reals):
-                    y["REAL", subprob, attr].values[np.ix_(rows)] = pred[:, n]
+            pred = machine.predict(X)
+            reals = self.dummies_columns.to_frame().loc[pd.IndexSlice["REAL", subprob]].iloc[:, 2].unique()
+            for n, attr in enumerate(reals):
+                y["REAL", subprob, attr] = pred[:, n]
 
-        df = labeled_data.copy()
-        df.pred = y
-        return df
+        ld = labeled_data.copy()
+        ld.pred = y
+        if force_subprobs:
+            return ld
+        else:
+            return ld.valid_pred()
 
 
     def feature_importances(self):
