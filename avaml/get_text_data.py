@@ -11,7 +11,7 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import StratifiedKFold, KFold
 
 from avaml import Error, varsomdata, setenvironment as se, _NONE, CSV_VERSION, REGIONS, merge
-from avaml.download import _get_varsom_obs, _get_weather_obs, _get_regobs_obs, REG_ENG
+from avaml.aggregatedata.download import _get_varsom_obs, _get_weather_obs, _get_regobs_obs, REG_ENG
 from varsomdata import getforecastapi as gf
 from varsomdata import getmisc as gm
 
@@ -169,9 +169,10 @@ class TextDataset:
             varsom, labels = _get_varsom_obs(year=season, max_file_age=max_file_age)
             
             # need to isolate text element before merging varsom
-            text = varsom['main_text']
+            text = varsom['avalanche_danger']
             self.text = merge(self.text, text)
-            varsom.pop('main_text')
+            varsom.pop('avalanche_danger')
+            #varsom.pop('main_text')
             self.varsom = merge(self.varsom, varsom)
             
             self.labels = merge(self.labels, labels)
@@ -181,7 +182,7 @@ class TextDataset:
             self.weather = merge(self.weather, weather)
          
         # we need to have a key for the main dictionary in order to load it into a dataframe
-        self.text = {'main_text': self.text}
+        self.text = {'danger_text': self.text}
         print('Done!\n')
         
     @staticmethod
@@ -369,7 +370,7 @@ class LabeledData:
         :param with_varsom:      Whether to include previous avalanche bulletins into the indata.
         """
         self.data = data
-        self.main_text = text
+        self.danger_text = text
         self.row_weight = row_weight
         if label is not None:
             self.label = label
@@ -656,7 +657,7 @@ class LabeledData:
         ld = LabeledData(
             self.data.copy(deep=True),
             self.label.copy(deep=True) if self.label is not None else None,
-            self.main_text.copy(deep=True),
+            self.danger_text.copy(deep=True),
             self.row_weight.copy(deep=True),
             self.days,
             copy.copy(self.regobs_types),

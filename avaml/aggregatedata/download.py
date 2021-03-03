@@ -77,7 +77,8 @@ AVALANCHE_WARNING = {
     "danger_level": ("danger_level", lambda x: x),
     "emergency_warning": ("emergency_warning", lambda x: float(x == "Ikke gitt")),
     "problem_amount": ("avalanche_problems", lambda x: len(x)),
-    "main_text": ("main_text", lambda x: x),
+    #"main_text": ("main_text", lambda x: x),
+    "avalanche_danger": ("avalanche_danger", lambda x: x),
 }
 
 # Same as AVALANCHE_WARNING, but destined for the label table
