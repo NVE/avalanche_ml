@@ -424,6 +424,64 @@ class LabeledData:
             temp_cols = [bool(re.match(r"^temp_(max|min)$", title)) for title in ld.data.columns.get_level_values(0)]
             ld.data.loc[:, temp_cols] = np.sign(ld.data.loc[:, temp_cols]) * np.sqrt(np.abs(ld.data.loc[:, temp_cols]))
         return ld
+    
+    def rangeify_elevations(self):
+        """Convert all elevations to ranges"""
+        MAX_ELEV = 2500
+
+        def convert_label(df):
+            problems = df.columns.get_level_values(1).unique().to_series().replace(_NONE, np.nan).dropna()
+            for problem in problems:
+                fill = df["CLASS", problem, "lev_fill"].apply(str)
+                ones = fill == "1"
+                twos = fill == "2"
+                threes = fill == "3"
+
+                df.loc[ones, ("REAL", problem, "lev_min")] = df.loc[ones, ("REAL", problem, "lev_max")]
+                df.loc[ones, ("REAL", problem, "lev_max")] = MAX_ELEV
+                df.loc[ones, ("CLASS", problem, "lev_fill")] = "4"
+
+                df.loc[twos, ("REAL", problem, "lev_min")] = 0
+                df.loc[twos, ("CLASS", problem, "lev_fill")] = "4"
+
+                df.loc[threes, ("REAL", problem, "lev_min")] = 0
+                df.loc[threes, ("REAL", problem, "lev_max")] = MAX_ELEV
+                df.loc[threes, ("CLASS", problem, "lev_fill")] = "4"
+
+        def convert_data(df):
+            prefixes = set(map(lambda y: (y[0][:-7], y[1]), filter(lambda x: re.search(r"lev_fill", x[0]), df.columns)))
+            for prefix in prefixes:
+                ones = df[(f"{prefix[0]}_fill_1", prefix[1])].apply(np.bool)
+                twos = df[(f"{prefix[0]}_fill_2", prefix[1])].apply(np.bool)
+                threes = df[(f"{prefix[0]}_fill_3", prefix[1])].apply(np.bool)
+                fours = df[(f"{prefix[0]}_fill_4", prefix[1])].apply(np.bool)
+
+                df.loc[ones, (f"{prefix[0]}_min", prefix[1])] = df.loc[ones, (f"{prefix[0]}_max", prefix[1])]
+                df.loc[ones, (f"{prefix[0]}_max", prefix[1])] = MAX_ELEV
+                df.loc[ones == True, (f"{prefix[0]}_fill_4", prefix[1])] = 1
+                df[(f"{prefix[0]}_fill_1", prefix[1])] = np.zeros(ones.shape)
+
+                df.loc[twos, (f"{prefix[0]}_min", prefix[1])] = 0
+                df.loc[twos == True, (f"{prefix[0]}_fill_4", prefix[1])] = 1
+                df[(f"{prefix[0]}_fill_2", prefix[1])] = np.zeros(twos.shape)
+
+                df.loc[threes, (f"{prefix[0]}_min", prefix[1])] = 0
+                df.loc[threes, (f"{prefix[0]}_min", prefix[1])] = MAX_ELEV
+                df.loc[threes == True, (f"{prefix[0]}_fill_4", prefix[1])] = 1
+                df[(f"{prefix[0]}_fill_3", prefix[1])] = np.zeros(threes.shape)
+
+        ld = self.copy().denormalize()
+        if self.label is not None:
+            convert_label(ld.label)
+        if self.pred is not None:
+            convert_label(ld.pred)
+        if self.data is not None:
+            convert_data(ld.data)
+
+        if self.is_normalized:
+            return ld.normalize()
+        else:
+            return ld
 
     def valid_pred(self):
         """Makes the bulletins internally coherent. E.g., removes problem 3 if problem 2 is blank."""
