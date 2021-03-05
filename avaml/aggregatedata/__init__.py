@@ -423,10 +423,36 @@ class LabeledData:
         ld = self.copy()
         if self.data is not None:
             temp_cols = [bool(re.match(r"^temp_(max|min)$", title)) for title in ld.data.columns.get_level_values(0)]
+
             ld.data.loc[:, temp_cols] = np.sign(ld.data.loc[:, temp_cols]) * np.sqrt(np.abs(ld.data.loc[:, temp_cols]))
             ld.scaler.fit(ld.data.values)
         return ld
-    
+
+    def problem_graph(self):
+        label = pd.Series(self.label["CLASS", _NONE, "problem_1"], name="label")
+        pred1 = pd.Series(self.pred["CLASS", _NONE, "problem_1"], name="problem_1")
+        pred2 = pd.Series(self.pred["CLASS", _NONE, "problem_2"], name="problem_2")
+
+        groups = pd.concat([label, pred1, pred2], axis=1).groupby(["label", "problem_1"], dropna=False)
+        count = groups.count()["problem_2"].rename("count")
+        p2 = groups["problem_2"].apply(lambda x: pd.Series.mode(x)[0]).replace(0, np.nan)
+        return pd.concat([count, p2], axis=1)
+
+    def statham(self):
+        """Make a danger level in the same manner as Statham et al., 2018."""
+        if self.pred is None:
+            raise NotPredictedError
+
+        label = self.label[("CLASS", _NONE, "danger_level")].apply(np.int)
+        pred = self.pred[("CLASS", _NONE, "danger_level")].apply(np.int)
+        ones = pd.Series(np.ones(pred.shape), index=pred.index)
+        cols = ["label", "diff", "n"]
+        df = pd.DataFrame(pd.concat([label, label - pred, ones], axis=1).values, columns=cols)
+        bias = df.groupby(cols[:-1]).count().unstack().droplevel(0, axis=1)
+        n = df.groupby(cols[0]).count()["n"]
+        share = bias.divide(n, axis=0)
+        return pd.concat([n, share], axis=1)
+
     def rangeify_elevations(self):
         """Convert all elevations to ranges"""
         MAX_ELEV = 2500
