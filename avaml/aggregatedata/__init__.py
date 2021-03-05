@@ -453,6 +453,60 @@ class LabeledData:
         share = bias.divide(n, axis=0)
         return pd.concat([n, share], axis=1)
 
+    def adam(self):
+        if self.pred is None:
+            raise NotPredictedError
+
+        touch = pd.DataFrame({
+            1: {(2, 10): "A", (3, 10): "A", (3, 21): "B", (5, 21): "B", (3, 22): "B", (5, 22): "B"},
+            2: {(2, 10): "A", (3, 10): "B", (3, 21): "C", (5, 21): "D", (3, 22): "C", (5, 22): "D"},
+            3: {(2, 10): "B", (3, 10): "C", (3, 21): "D", (5, 21): "E", (3, 22): "D", (5, 22): "E"},
+            4: {(2, 10): "B", (3, 10): "C", (3, 21): "D", (5, 21): "E", (3, 22): "D", (5, 22): "E"}
+        })
+        danger = pd.DataFrame({
+            1: {"A": 1, "B": 1, "C": 1, "D": 2, "E": 3},
+            2: {"A": 1, "B": 2, "C": 2, "D": 3, "E": 4},
+            3: {"A": 2, "B": 2, "C": 3, "D": 3, "E": 4},
+            4: {"A": 2, "B": 3, "C": 4, "D": 4, "E": 5},
+            5: {"A": 2, "B": 3, "C": 4, "D": 4, "E": 5}
+        })
+
+        def get_danger(series):
+            p1 = series["CLASS", _NONE, "problem_1"]
+            p2 = series["CLASS", _NONE, "problem_2"]
+            p3 = series["CLASS", _NONE, "problem_2"]
+            dl = ("CLASS", _NONE, "danger_level")
+            ew = ("CLASS", _NONE, "emergency_warning")
+            if p1 == _NONE:
+                series[dl] = "1"
+                series[ew] = "Ikke gitt"
+            else:
+                p1 = series["CLASS", p1][["prob", "trig", "dist", "dsize"]].apply(np.int)
+                try:
+                    dl1 = str(danger.loc[touch.loc[(p1["prob"], p1["trig"]), p1["dist"]], p1["dsize"]])
+                except KeyError:
+                    dl1 = 0
+
+                if p2 != _NONE:
+                    p2 = series["CLASS", p2][["prob", "trig", "dist", "dsize"]].apply(np.int)
+                    try:
+                        dl1 = str(danger.loc[touch.loc[(p1["prob"], p1["trig"]), p1["dist"]], p1["dsize"]])
+                    except KeyError:
+                        series[dl] = "2"
+
+                series[ew] = "Ikke gitt"
+                try:
+                    if p1["trig"] == 22 and p1["dsize"] >= 3:
+                        series[ew] = "Naturlig utløste skred"
+                except KeyError:
+                    pass
+
+            return series
+
+        ld = self.copy()
+        ld.pred = ld.pred.apply(get_danger, axis=1)
+        return ld
+
     def rangeify_elevations(self):
         """Convert all elevations to ranges"""
         MAX_ELEV = 2500
