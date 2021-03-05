@@ -413,6 +413,7 @@ class LabeledData:
             region_columns = list(filter(lambda x: re.match(r'^region_id', x[0]), ld.data.columns))
             ld.data.drop(region_columns, axis=1, inplace=True)
             ld.with_regions = False
+            ld.scaler.fit(ld.data.values)
             return ld
         else:
             return self.copy()
@@ -423,6 +424,7 @@ class LabeledData:
         if self.data is not None:
             temp_cols = [bool(re.match(r"^temp_(max|min)$", title)) for title in ld.data.columns.get_level_values(0)]
             ld.data.loc[:, temp_cols] = np.sign(ld.data.loc[:, temp_cols]) * np.sqrt(np.abs(ld.data.loc[:, temp_cols]))
+            ld.scaler.fit(ld.data.values)
         return ld
     
     def rangeify_elevations(self):
@@ -655,7 +657,6 @@ class LabeledData:
             ld.data.loc[:, ld.data.columns.get_level_values(1).values.astype(int) <= orig_days],
             to_time_parameters(ld)
         ], axis=1).sort_index()
-        ld.scaler = StandardScaler()
         ld.scaler.fit(ld.data.values)
         return ld
 
