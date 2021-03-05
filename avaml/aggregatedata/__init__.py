@@ -480,6 +480,7 @@ class LabeledData:
 
     def split(self, rounds=3, seed="Njunis"):
         """Returns a split of the object into a training set, a test set and a validation set.
+           Parameters rounds and seed are not used any more.
 
         Use as:
             for test, train, eval in ld.split():
@@ -487,30 +488,10 @@ class LabeledData:
                 model.predict(train)
                 model.predict(eval)
         """
-        rand = random.Random(seed)
-
-        result = []
-        for _ in range(0, rounds):
-            troms = rand.sample([3006, 3007, 3009, 3010, 3011, 3012, 3013], k=7)
-            nordland = rand.sample([3014, 3015, 3016, 3017], k=4)
-            south = rand.sample([3022, 3023, 3024, 3027, 3028, 3029, 3031, 3032, 3034, 3035, 3037], k=11)
-
-            train_regions = troms[2:] + nordland[2:] + south[2:]
-            test_regions = [troms[0], nordland[0], south[0]]
-            eval_regions = [troms[1], nordland[1], south[1]]
-
-            split = []
-            for regions in [train_regions, test_regions, eval_regions]:
-                ld = self.copy()
-                ld.data = ld.data.iloc[[region in regions for region in ld.data.index.get_level_values(1)]]
-                ld.label = ld.label.iloc[[region in regions for region in ld.label.index.get_level_values(1)]]
-                ld.pred = ld.pred.iloc[[region in regions for region in ld.pred.index.get_level_values(1)]]
-                ld.row_weight = ld.row_weight.iloc[[region in regions for region in ld.row_weight.index.get_level_values(1)]]
-                split.append(ld)
-            result.append(tuple(split))
-
-        return result
-
+        train_regions = [3007, 3012, 3010, 3009, 3013, 3017, 3014, 3032, 3027, 3029, 3022, 3031, 3023, 3037, 3024, 3028]
+        test_regions = [3011, 3016, 3035]
+        eval_regions = [3006, 3015, 3034]
+        return [(train_regions, test_regions, eval_regions)]
 
     def f1(self):
         """Get F1, precision, recall and RMSE of all labels.
