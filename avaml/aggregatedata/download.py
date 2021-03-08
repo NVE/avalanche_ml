@@ -649,8 +649,6 @@ def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23
                 retries, future = future_tuples.pop()
                 response = future.result()
                 try:
-                    if retries == 0:
-                        raise Exception()
                     raw_obses = response.json()
                 except:
                     if retries < 5:
