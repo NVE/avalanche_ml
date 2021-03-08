@@ -1,3 +1,4 @@
+import json
 import math
 import os
 import pickle
@@ -634,22 +635,29 @@ def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23
         searched = number_of_records
 
         with futures.ThreadPoolExecutor(140) as executor:
+            queries = []
             while searched < total_matches:
                 query["Offset"] += number_of_records
-                query_copy = query.copy()
-                future = executor.submit(lambda: requests.post(url=url, json=query_copy))
-                future_tuples.append((query_copy, query["Offset"], 0, future))
+                queries.append(query.copy())
                 searched += number_of_records
 
+            for _ in range(0, len(queries)):
+                future = executor.submit(lambda: requests.post(url=url, json=queries.pop()))
+                future_tuples.append((0, future))
+
             while len(future_tuples):
-                query, offset, retries, future = future_tuples.pop()
+                retries, future = future_tuples.pop()
+                response = future.result()
                 try:
-                    raw_obses = future.result().json()
+                    if retries == 0:
+                        raise Exception()
+                    raw_obses = response.json()
                 except:
                     if retries < 5:
-                        future = executor.submit(lambda: requests.post(url=url, json=query))
-                        future_tuples.insert(0, (query, query["Offset"], retries + 1, future))
+                        future = executor.submit(lambda: requests.Session().send(response.request))
+                        future_tuples.insert(0, (retries + 1, future))
                     else:
+                        offset = json.loads(response.request.body)["Offset"]
                         print(f"Failed to fetch regobs, offset {offset}, skipping", file=sys.stderr)
                     continue
                 results = results + raw_obses["Results"]
