@@ -12,6 +12,7 @@ from avaml import _NONE, CSV_VERSION, REGIONS, merge, Error, setenvironment as s
 from varsomdata import getforecastapi as gf
 from varsomdata import getvarsompickles as gvp
 from varsomdata import getmisc as gm
+from varsomdata import getobservations as go
 
 _pwl = re.compile("(DH|SH|FC)")
 
@@ -595,6 +596,7 @@ def _get_weather_obs(year, date=None, days=None, max_file_age=23):
 def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23):
     regions = gm.get_forecast_regions(year=year, get_b_regions=True)
     observations = {}
+    varsomdata_obses = {}
 
     if len(requested_types) == 0:
         return observations
@@ -620,6 +622,11 @@ def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23
     else:
         from_date, to_date = gm.get_dates_from_season(year=year)
 
+    if "AvalancheIndex" in requested_types:
+        avalanche_index = True
+    else:
+        avalanche_index = False
+
     req_set = set(requested_types) & set(REG_ENG_V4.keys())
 
     # Make sure all requested elements from RegObs actually have the information we need specified
@@ -638,6 +645,15 @@ def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23
     }
 
     results = []
+
+    def send_req(queries):
+        query = queries.pop()
+        try:
+            req = requests.post(url=url, json=query)
+            return (req, query)
+        except:
+            return (None, query)
+
     if get_new:
         future_tuples = []
 
@@ -650,17 +666,17 @@ def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23
                 query["Offset"] += number_of_records
 
             for _ in range(0, len(queries)):
-                future = executor.submit(lambda: requests.post(url=url, json=queries.pop()))
+                future = executor.submit(send_req, queries)
                 future_tuples.append((0, future))
 
             while len(future_tuples):
                 retries, future = future_tuples.pop()
-                response = future.result()
                 try:
+                    response, query = future.result()
                     raw_obses = response.json()
                 except:
                     if retries < 5:
-                        future = executor.submit(lambda: requests.Session().send(response.request))
+                        future = executor.submit(send_req, [query])
                         future_tuples.insert(0, (retries + 1, future))
                     else:
                         offset = json.loads(response.request.body)["Offset"]
@@ -680,6 +696,11 @@ def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23
             return _get_regobs_obs(regions, year, requested_types, max_file_age)
 
     for raw_obs in results:
+        date = dt.datetime.fromisoformat(raw_obs["DtObsTime"]).date()
+        key = (date.isoformat(), raw_obs["ObsLocation"]["ForecastRegionTID"])
+        if key not in observations:
+            observations[key] = {}
+            varsomdata_obses[key] = []
         for obs_type in req_set:
             if REG_ENG_V4[obs_type] not in raw_obs or not raw_obs[REG_ENG_V4[obs_type]]:
                 continue
@@ -713,13 +734,10 @@ def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23
             except KeyError:
                 pass
 
-            date = dt.datetime.fromisoformat(raw_obs["DtObsTime"]).date()
-            key = (date.isoformat(), raw_obs["ObsLocation"]["ForecastRegionTID"])
-            if key not in observations:
-                observations[key] = {}
             if obs_type not in observations[key]:
                 observations[key][obs_type] = []
             observations[key][obs_type].append(obs)
+        varsomdata_obses[key] += go.Observation(raw_obs).Observations
 
     # We want the most competent observations first
     for date_region in observations.values():
@@ -731,7 +749,7 @@ def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23
         # Use 5 most competent observations, and list both categories as well as scalars
         for obs_idx in range(0, 5):
             # One type of observation (test, danger signs etc.) at a time
-            for regobs_type in requested_types:
+            for regobs_type in req_set:
                 obses = observation[regobs_type] if regobs_type in observation else []
                 # Go through each requested class attribute from the specified observation type
                 for attr, cat in REGOBS_CLASSES[regobs_type].items():
@@ -757,6 +775,15 @@ def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23
             lambda x: {0: 0, 1: 1, 2: -1, 3: -1}[x['ForecastCorrectTID']],
             observation['Skredfarevurdering']
         )) if 'Skredfarevurdering' in observation else 0
+
+        if avalanche_index:
+            if "regobs_avalancheidx" not in df_dict:
+                df_dict["regobs_avalancheidx"] = {}
+            avalanche_indices = list(map(lambda x: x.index, gm.get_avalanche_index(varsomdata_obses[key])))
+            if avalanche_indices:
+                df_dict['regobs_avalancheidx'][key] = max(avalanche_indices)
+            else:
+                df_dict['regobs_avalancheidx'][key] = 0
 
     return df_dict
 
