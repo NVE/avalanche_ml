@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
-from avaml import Error, setenvironment as se, _NONE, CSV_VERSION, REGIONS, merge
+from avaml import Error, setenvironment as se, _NONE, CSV_VERSION, REGIONS, merge, REGION_ELEV
 from avaml.aggregatedata.download import _get_varsom_obs, _get_weather_obs, _get_regobs_obs, REG_ENG, PROBLEMS
 from avaml.aggregatedata.time_parameters import to_time_parameters
 from varsomdata import getforecastapi as gf
@@ -323,6 +323,8 @@ class ForecastDataset:
 
 class LabeledData:
     is_normalized = False
+    with_regions = True
+    elevation_class = False
     scaler = StandardScaler()
 
     def __init__(self, data, label, row_weight, days, regobs_types, with_varsom, seasons=False):
@@ -373,7 +375,6 @@ class LabeledData:
             self.scaler.fit(self.data.values)
         self.single = not seasons
         self.seasons = sorted(list(set(seasons if seasons else [])))
-        self.with_regions = True
 
     def normalize(self, by=None):
         """Normalize the data feature-wise using MinMax.
@@ -507,6 +508,120 @@ class LabeledData:
         ld.pred = ld.pred.apply(get_danger, axis=1)
         return ld
 
+    def to_elev_class(self):
+        """Convert all elevations to classes"""
+        if self.elevation_class:
+            return self.copy()
+        MAX_ELEV = 2500
+
+        def round_min(series):
+            region = int(series.name[1])
+            elev = float(series.values[0])
+            tl = REGION_ELEV[region][0]
+            return 0 if abs(elev - 0) <= abs(elev - tl) else 1
+
+        def round_max(series):
+            region = int(series.name[1])
+            elev = float(series.values[0])
+            tl = REGION_ELEV[region][1]
+            return 0 if abs(elev - MAX_ELEV) <= abs(elev - tl) else 1
+
+        def convert_label(df):
+            problems = df.columns.get_level_values(1).unique().to_series().replace(_NONE, np.nan).dropna()
+            for problem in problems:
+                df["CLASS", problem, "lev_min"] = df[[("REAL", problem, "lev_min")]].apply(round_min, axis=1).apply(str)
+                df["CLASS", problem, "lev_max"] = df[[("REAL", problem, "lev_max")]].apply(round_max, axis=1).apply(str)
+                df.drop([
+                    ("CLASS", problem, "lev_fill"),
+                    ("REAL", problem, "lev_min"),
+                    ("REAL", problem, "lev_max")
+                ], axis=1, inplace=True)
+            df.sort_index(inplace=True, axis=1)
+
+        def convert_data(df):
+            prefixes = set(map(lambda y: (y[0][:-7], y[1]), filter(lambda x: re.search(r"lev_fill", x[0]), df.columns)))
+            for prefix in prefixes:
+                df[f"{prefix[0]}_min", prefix[1]] = df[[(f"{prefix[0]}_min", prefix[1])]].apply(round_min, axis=1)
+                df[f"{prefix[0]}_max", prefix[1]] = df[[(f"{prefix[0]}_max", prefix[1])]].apply(round_max, axis=1)
+                df.drop([
+                    (f"{prefix[0]}_fill_1", prefix[1]),
+                    (f"{prefix[0]}_fill_2", prefix[1]),
+                    (f"{prefix[0]}_fill_3", prefix[1]),
+                    (f"{prefix[0]}_fill_4", prefix[1]),
+                ], axis=1, inplace=True)
+
+        range_ld = self.copy().denormalize()
+        range_ld = range_ld.rangeify_elevations()
+        if self.label is not None:
+            convert_label(range_ld.label)
+        if self.pred is not None:
+            convert_label(range_ld.pred)
+        if self.data is not None:
+            convert_data(range_ld.data)
+
+        range_ld.scaler.fit(range_ld.data)
+        range_ld.elevation_class = True
+        if self.is_normalized:
+            return range_ld.normalize()
+        else:
+            return range_ld
+
+    def from_elev_class(self):
+        """Convert all elevation classes to elevations"""
+        if not self.elevation_class:
+            return self.copy()
+        MAX_ELEV = 2500
+
+        def find_min(series):
+            region = int(series.name[1])
+            is_middle = bool(float(series.values[0]))
+            tl = REGION_ELEV[region][0]
+            return tl if is_middle else 0
+
+        def find_max(series):
+            region = int(series.name[1])
+            is_middle = bool(float(series.values[0]))
+            tl = REGION_ELEV[region][1]
+            return tl if is_middle else MAX_ELEV
+
+        def convert_label(df):
+            problems = df.columns.get_level_values(1).unique().to_series().replace(_NONE, np.nan).dropna()
+            for problem in problems:
+                df["REAL", problem, "lev_min"] = df[[("CLASS", problem, "lev_min")]].apply(find_min, axis=1).apply(str)
+                df["REAL", problem, "lev_max"] = df[[("CLASS", problem, "lev_max")]].apply(find_max, axis=1).apply(str)
+                df["CLASS", problem, "lev_fill"] = "4"
+                df.drop([
+                    ("CLASS", problem, "lev_min"),
+                    ("CLASS", problem, "lev_max"),
+                ], axis=1, inplace=True)
+            df.sort_index(inplace=True, axis=1)
+
+        def convert_data(df):
+            prefixes = set(map(lambda y: (y[0][:-7], y[1]), filter(lambda x: re.search(r"lev_fill", x[0]), df.columns)))
+            for prefix in prefixes:
+                df[f"{prefix[0]}_min", prefix[1]] = df[[(f"{prefix[0]}_min", prefix[1])]].apply(find_min, axis=1)
+                df[f"{prefix[0]}_max", prefix[1]] = df[[(f"{prefix[0]}_max", prefix[1])]].apply(find_max, axis=1)
+                df[f"{prefix[0]}_fill_1", prefix[1]] = 0
+                df[f"{prefix[0]}_fill_2", prefix[1]] = 0
+                df[f"{prefix[0]}_fill_3", prefix[1]] = 0
+                df[f"{prefix[0]}_fill_4", prefix[1]] = 1
+            df.sort_index(inplace=True, axis=1)
+
+        range_ld = self.copy().denormalize()
+        if self.label is not None:
+            convert_label(range_ld.label)
+        if self.pred is not None:
+            convert_label(range_ld.pred)
+        if self.data is not None:
+            convert_data(range_ld.data)
+
+        range_ld.scaler.fit(range_ld.data)
+        range_ld.elevation_class = False
+        if self.is_normalized:
+            return range_ld.normalize()
+        else:
+            return range_ld
+
     def rangeify_elevations(self):
         """Convert all elevations to ranges"""
         MAX_ELEV = 2500
@@ -560,6 +675,7 @@ class LabeledData:
         if self.data is not None:
             convert_data(ld.data)
 
+        ld.scaler.fit(ld.data)
         if self.is_normalized:
             return ld.normalize()
         else:
@@ -571,6 +687,9 @@ class LabeledData:
             raise NotPredictedError
 
         ld = self.copy()
+
+        if self.elevation_class:
+            ld = ld.from_elev_class()
 
         # Handle Problem 1-3
         prob_cols = []
@@ -946,6 +1065,8 @@ class LabeledData:
             self.seasons
         )
         ld.is_normalized = self.is_normalized
+        ld.with_regions = self.with_regions
+        ld.elevation_class = self.elevation_class
         ld.scaler = self.scaler
         ld.pred = self.pred.copy(deep=True) if self.pred is not None else None
         return ld
