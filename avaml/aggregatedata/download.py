@@ -217,6 +217,17 @@ REG_ENG = {
     "Snøprofil": "snowprofile",
 }
 
+REG_ENG_V4 = {
+    "Faretegn": "DangerObs",
+    "Tester": "CompressionTest",
+    "Skredaktivitet": "AvalancheActivityObs2",
+    "Skredhendelse": "AvalancheObs",
+    "Snødekke": "SnowSurfaceObservation",
+    "Skredproblem": "AvalancheEvalProblem2",
+    "Skredfarevurdering": "AvalancheEvaluation3",
+    "Snøprofil": "SnowProfile2",
+}
+
 # Transformations for RegObs Classes
 REGOBS_CLASSES = {
     "Faretegn": {
@@ -232,7 +243,7 @@ REGOBS_CLASSES = {
         }
     },
     "Tester": {
-        "PropagationTName": {
+        "PropagationName": {
             "ECTPV": "ectpv",
             "ECTP": "ectp",
             "ECTN": "ectn",
@@ -332,10 +343,10 @@ REGOBS_SCALARS = {
     },
     "Skredhendelse": {
         "DestructiveSize": ("DestructiveSizeTID", lambda x: x if 0 < x <= 5 else 0),
-        "FractureHeight": ("FractureHeigth", lambda x: x),  # sic
+        "FractureHeight": ("FractureHeight", lambda x: x),
         "FractureWidth": ("FractureWidth", lambda x: x),
-        "HeightStartZone": ("HeigthStartZone", lambda x: x),  # sic
-        "HeightStopZone": ("HeigthStopZone", lambda x: x),  # sic
+        "HeightStartZone": ("HeightStartZone", lambda x: x),
+        "HeightStopZone": ("HeightStopZone", lambda x: x),
         "ValidExpositionN": ("ValidExposition", lambda x: float(x[0])),
         "ValidExpositionNE": ("ValidExposition", lambda x: float(x[1])),
         "ValidExpositionE": ("ValidExposition", lambda x: float(x[2])),
@@ -348,7 +359,7 @@ REGOBS_SCALARS = {
     "Snødekke": {
         "SnowDepth": ("SnowDepth", lambda x: x),
         "NewSnowDepth24": ("NewSnowDepth24", lambda x: x),
-        "Snowline": ("Snowline", lambda x: x),
+        "Snowline": ("SnowLine", lambda x: x),
         "NewSnowline": ("NewSnowLine", lambda x: x),
         "HeightLimitLayeredSnow": ("HeightLimitLayeredSnow", lambda x: x),
         "SnowDrift": ("SnowDriftTID", lambda x: x),
@@ -609,17 +620,18 @@ def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23
     else:
         from_date, to_date = gm.get_dates_from_season(year=year)
 
-    req_set = set(requested_types)
+    req_set = set(requested_types) & set(REG_ENG_V4.keys())
+
     # Make sure all requested elements from RegObs actually have the information we need specified
     if not min(map(lambda x: set(list(x.keys())).issuperset(req_set), [REGOBS_CLASSES, REGOBS_SCALARS, REG_ENG])):
         raise RegObsRegTypeError()
 
-    url = "https://api.nve.no/hydrology/regobs/webapi_v3.2.0/Search/Avalanche"
+    url = "https://api.regobs.no/v4/Search"
     query = {
         "LangKey": 1,
         "FromDate": from_date.isoformat(),
         "ToDate": to_date.isoformat(),
-        "SelectedRegistrationTypes": [],
+        "SelectedRegistrationTypes": None,
         "SelectedRegions": regions,
         "NumberOfRecords": number_of_records,
         "Offset": 0
@@ -629,17 +641,13 @@ def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23
     if get_new:
         future_tuples = []
 
-        first = requests.post(url=url, json=query).json()
-        results = results + first["Results"]
-        total_matches = first['TotalMatches']
-        searched = number_of_records
+        total_matches = requests.post(url=url + "/Count", json=query).json()["TotalMatches"]
 
         with futures.ThreadPoolExecutor(140) as executor:
             queries = []
-            while searched < total_matches:
-                query["Offset"] += number_of_records
+            while query["Offset"] < total_matches:
                 queries.append(query.copy())
-                searched += number_of_records
+                query["Offset"] += number_of_records
 
             for _ in range(0, len(queries)):
                 future = executor.submit(lambda: requests.post(url=url, json=queries.pop()))
@@ -658,7 +666,7 @@ def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23
                         offset = json.loads(response.request.body)["Offset"]
                         print(f"Failed to fetch regobs, offset {offset}, skipping", file=sys.stderr)
                     continue
-                results = results + raw_obses["Results"]
+                results = results + raw_obses
 
         if not date:
             with open(file_name, 'wb') as handle:
@@ -672,32 +680,41 @@ def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23
             return _get_regobs_obs(regions, year, requested_types, max_file_age)
 
     for raw_obs in results:
-        for reg in raw_obs["Registrations"]:
-            obs_type = reg["RegistrationName"]
-            if obs_type not in requested_types:
+        for obs_type in req_set:
+            if REG_ENG_V4[obs_type] not in raw_obs or not raw_obs[REG_ENG_V4[obs_type]]:
                 continue
+            reg = raw_obs[REG_ENG_V4[obs_type]]
+
             # Ignore snow profiles of the old format
-            if obs_type == "Snøprofil" and "StratProfile" not in reg["FullObject"]:
+            if obs_type == "Snøprofil" and "StratProfile" not in reg:
                 continue
 
             obs = {
-                "competence": raw_obs["CompetenceLevelTid"]
+                "competence": raw_obs["Observer"]["CompetenceLevelTID"]
             }
             try:
                 for attr, categories in REGOBS_CLASSES[obs_type].items():
-                    value = reg["FullObject"][attr]
                     for cat_id, cat_name in categories.items():
-                        obs[cat_name] = 1 if cat_id == value else 0
+                        if isinstance(reg, list):
+                            obs[cat_name] = 1 if cat_id in map(lambda x: x[attr],reg) else 0
+                        else:
+                            obs[cat_name] = 1 if cat_id == reg[attr] else 0
             except KeyError:
                 pass
             try:
                 for regobs_attr, conv in REGOBS_SCALARS[obs_type].values():
-                    obs[regobs_attr] = reg["FullObject"][regobs_attr]
+                    obs[regobs_attr] = 0
+                    if isinstance(reg, list) and len(reg) > 0:
+                        obs[regobs_attr] = reg[0][regobs_attr]
+                    elif not isinstance(reg, list):
+                        obs[regobs_attr] = reg[regobs_attr]
+                    if obs[regobs_attr] is None:
+                        obs[regobs_attr] = 0
             except KeyError:
                 pass
 
             date = dt.datetime.fromisoformat(raw_obs["DtObsTime"]).date()
-            key = (date.isoformat(), raw_obs["ForecastRegionTid"])
+            key = (date.isoformat(), raw_obs["ObsLocation"]["ForecastRegionTID"])
             if key not in observations:
                 observations[key] = {}
             if obs_type not in observations[key]:
