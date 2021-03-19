@@ -104,7 +104,7 @@ class SKClassifierMachine(BulletinMachine):
                         y.loc[idx, pd.IndexSlice["CLASS", subprob]],
                         sample_weight=np.ravel(self.row_weight.loc[idx])
                     )
-                except TypeError:
+                except (TypeError, ValueError):
                     self.machines_class[subprob].fit(
                         X[idx],
                         y.loc[idx, pd.IndexSlice["CLASS", subprob]]
@@ -125,7 +125,7 @@ class SKClassifierMachine(BulletinMachine):
                             dummies.loc[idx, pd.IndexSlice["MULTI", subprob]],
                             sample_weight=np.ravel(self.row_weight.loc[idx])
                         )
-                    except TypeError:
+                    except (TypeError, ValueError):
                         self.machines_multi[subprob].fit(
                             X[idx],
                             dummies.loc[idx, pd.IndexSlice["MULTI", subprob]]
@@ -145,7 +145,7 @@ class SKClassifierMachine(BulletinMachine):
                             y.loc[idx, pd.IndexSlice["REAL", subprob]].astype(np.float),
                             sample_weight=np.ravel(self.row_weight.loc[idx])
                         )
-                    except TypeError:
+                    except (TypeError, ValueError):
                         self.machines_real[subprob].fit(
                             X[idx],
                             y.loc[idx, pd.IndexSlice["REAL", subprob]].astype(np.float)
