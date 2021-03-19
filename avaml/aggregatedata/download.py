@@ -216,6 +216,7 @@ REG_ENG = {
     "Skredproblem": "problem",
     "Skredfarevurdering": "danger",
     "Snøprofil": "snowprofile",
+    "AvalancheIndex": "avalancheidx",
 }
 
 REG_ENG_V4 = {

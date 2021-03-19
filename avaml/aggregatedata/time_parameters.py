@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 
 from avaml.aggregatedata import PROBLEMS
-from avaml.aggregatedata.download import CAUSES, REG_ENG, REGOBS_CLASSES, _camel_to_snake, REGOBS_SCALARS
+from avaml.aggregatedata.download import CAUSES, REG_ENG_V4, REGOBS_CLASSES, _camel_to_snake, REGOBS_SCALARS
 
 
 def coeff(series):
@@ -76,7 +76,7 @@ for prob in PROBLEMS.values():
     binary_columns = binary_columns.union({f"problem_{prob}_cause_{cause}" for cause in CAUSES.values()})
 
 regobs_discrete_columns = set()
-for reg_type, reg_eng in REG_ENG.items():
+for reg_type, reg_eng in REG_ENG_V4.items():
     for reg_class, subclasses in REGOBS_CLASSES[reg_type].items():
         reg_class = _camel_to_snake(reg_class)
         for subclass in subclasses.values():
@@ -85,7 +85,7 @@ for reg_type, reg_eng in REG_ENG.items():
                 col = f"regobs_{reg_eng}_{reg_class}_{subclass}_{n}"
                 regobs_discrete_columns = regobs_discrete_columns.union({col})
 regobs_scalar_columns = set()
-for reg_type, reg_eng in REG_ENG.items():
+for reg_type, reg_eng in REG_ENG_V4.items():
     for reg_scalar in REGOBS_SCALARS[reg_type].keys():
         reg_scalar = _camel_to_snake(reg_scalar)
         for n in range(0, 5):
