@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
-from avaml import Error, setenvironment as se, _NONE, CSV_VERSION, REGIONS, merge
+from avaml import Error, setenvironment as se, _NONE, CSV_VERSION, REGIONS, merge, REGION_ELEV
 from avaml.aggregatedata.download import _get_varsom_obs, _get_weather_obs, _get_regobs_obs, REG_ENG, PROBLEMS
 from avaml.aggregatedata.time_parameters import to_time_parameters
 from varsomdata import getforecastapi as gf
@@ -323,6 +323,8 @@ class ForecastDataset:
 
 class LabeledData:
     is_normalized = False
+    with_regions = True
+    elevation_class = False
     scaler = StandardScaler()
 
     def __init__(self, data, label, row_weight, days, regobs_types, with_varsom, seasons=False):
@@ -373,7 +375,6 @@ class LabeledData:
             self.scaler.fit(self.data.values)
         self.single = not seasons
         self.seasons = sorted(list(set(seasons if seasons else [])))
-        self.with_regions = True
 
     def normalize(self, by=None):
         """Normalize the data feature-wise using MinMax.
@@ -413,6 +414,7 @@ class LabeledData:
             region_columns = list(filter(lambda x: re.match(r'^region_id', x[0]), ld.data.columns))
             ld.data.drop(region_columns, axis=1, inplace=True)
             ld.with_regions = False
+            ld.scaler.fit(ld.data.values)
             return ld
         else:
             return self.copy()
@@ -422,8 +424,315 @@ class LabeledData:
         ld = self.copy()
         if self.data is not None:
             temp_cols = [bool(re.match(r"^temp_(max|min)$", title)) for title in ld.data.columns.get_level_values(0)]
+
             ld.data.loc[:, temp_cols] = np.sign(ld.data.loc[:, temp_cols]) * np.sqrt(np.abs(ld.data.loc[:, temp_cols]))
+            ld.scaler.fit(ld.data.values)
         return ld
+
+    def problem_graph(self):
+        label = pd.Series(self.label["CLASS", _NONE, "problem_1"], name="label")
+        pred1 = pd.Series(self.pred["CLASS", _NONE, "problem_1"], name="problem_1")
+        pred2 = pd.Series(self.pred["CLASS", _NONE, "problem_2"], name="problem_2")
+
+        groups = pd.concat([label, pred1, pred2], axis=1).groupby(["label", "problem_1"], dropna=False)
+        count = groups.count()["problem_2"].rename("count")
+        p2 = groups["problem_2"].apply(lambda x: pd.Series.mode(x)[0]).replace(0, np.nan)
+        return pd.concat([count, p2], axis=1)
+
+    def statham(self):
+        """Make a danger level in the same manner as Statham et al., 2018."""
+        if self.pred is None:
+            raise NotPredictedError
+
+        label = self.label[("CLASS", _NONE, "danger_level")].apply(np.int)
+        pred = self.pred[("CLASS", _NONE, "danger_level")].apply(np.int)
+        ones = pd.Series(np.ones(pred.shape), index=pred.index)
+        cols = ["label", "diff", "n"]
+        df = pd.DataFrame(pd.concat([label, label - pred, ones], axis=1).values, columns=cols)
+        bias = df.groupby(cols[:-1]).count().unstack().droplevel(0, axis=1)
+        n = df.groupby(cols[0]).count()["n"]
+        share = bias.divide(n, axis=0)
+        return pd.concat([n, share], axis=1)
+
+    def adam(self):
+        if self.pred is None:
+            raise NotPredictedError
+
+        touch = pd.DataFrame({
+            1: {(2, 10): "A", (3, 10): "A", (3, 21): "B", (5, 21): "B", (3, 22): "B", (5, 22): "B"},
+            2: {(2, 10): "A", (3, 10): "B", (3, 21): "C", (5, 21): "D", (3, 22): "C", (5, 22): "D"},
+            3: {(2, 10): "B", (3, 10): "C", (3, 21): "D", (5, 21): "E", (3, 22): "D", (5, 22): "E"},
+            4: {(2, 10): "B", (3, 10): "C", (3, 21): "D", (5, 21): "E", (3, 22): "D", (5, 22): "E"}
+        })
+        danger = pd.DataFrame({
+            1: {"A": 1, "B": 1, "C": 1, "D": 2, "E": 3},
+            2: {"A": 1, "B": 2, "C": 2, "D": 3, "E": 4},
+            3: {"A": 2, "B": 2, "C": 3, "D": 3, "E": 4},
+            4: {"A": 2, "B": 3, "C": 4, "D": 4, "E": 5},
+            5: {"A": 2, "B": 3, "C": 4, "D": 4, "E": 5}
+        })
+
+        def get_danger(series):
+            p1 = series["CLASS", _NONE, "problem_1"]
+            p2 = series["CLASS", _NONE, "problem_2"]
+            p3 = series["CLASS", _NONE, "problem_2"]
+            dl = ("CLASS", _NONE, "danger_level")
+            ew = ("CLASS", _NONE, "emergency_warning")
+            if p1 == _NONE:
+                series[dl] = "1"
+                series[ew] = "Ikke gitt"
+            else:
+                p1 = series["CLASS", p1][["prob", "trig", "dist", "dsize"]].apply(np.int)
+                try:
+                    dl1 = str(danger.loc[touch.loc[(p1["prob"], p1["trig"]), p1["dist"]], p1["dsize"]])
+                except KeyError:
+                    dl1 = 0
+
+                if p2 != _NONE:
+                    p2 = series["CLASS", p2][["prob", "trig", "dist", "dsize"]].apply(np.int)
+                    try:
+                        dl1 = str(danger.loc[touch.loc[(p1["prob"], p1["trig"]), p1["dist"]], p1["dsize"]])
+                    except KeyError:
+                        series[dl] = "2"
+
+                series[ew] = "Ikke gitt"
+                try:
+                    if p1["trig"] == 22 and p1["dsize"] >= 3:
+                        series[ew] = "Naturlig utløste skred"
+                except KeyError:
+                    pass
+
+            return series
+
+        ld = self.copy()
+        ld.pred = ld.pred.apply(get_danger, axis=1)
+        return ld
+
+    def to_elev_class(self):
+        """Convert all elevations to classes"""
+        if self.elevation_class:
+            return self.copy()
+        MAX_ELEV = 2500
+
+        def round_min(series):
+            region = int(series.name[1])
+            elev = float(series.values[0])
+            tl = REGION_ELEV[region][0]
+            return 0 if abs(elev - 0) <= abs(elev - tl) else 1
+
+        def round_max(series):
+            region = int(series.name[1])
+            elev = float(series.values[0])
+            tl = REGION_ELEV[region][1]
+            return 0 if abs(elev - MAX_ELEV) <= abs(elev - tl) else 1
+
+        def convert_label(df):
+            problems = df.columns.get_level_values(1).unique().to_series().replace(_NONE, np.nan).dropna()
+            for problem in problems:
+                df["CLASS", problem, "lev_min"] = df[[("REAL", problem, "lev_min")]].apply(round_min, axis=1).apply(str)
+                df["CLASS", problem, "lev_max"] = df[[("REAL", problem, "lev_max")]].apply(round_max, axis=1).apply(str)
+                df.drop([
+                    ("CLASS", problem, "lev_fill"),
+                    ("REAL", problem, "lev_min"),
+                    ("REAL", problem, "lev_max")
+                ], axis=1, inplace=True)
+            df.sort_index(inplace=True, axis=1)
+
+        def convert_data(df):
+            prefixes = set(map(lambda y: (y[0][:-7], y[1]), filter(lambda x: re.search(r"lev_fill", x[0]), df.columns)))
+            for prefix in prefixes:
+                df[f"{prefix[0]}_min", prefix[1]] = df[[(f"{prefix[0]}_min", prefix[1])]].apply(round_min, axis=1)
+                df[f"{prefix[0]}_max", prefix[1]] = df[[(f"{prefix[0]}_max", prefix[1])]].apply(round_max, axis=1)
+                df.drop([
+                    (f"{prefix[0]}_fill_1", prefix[1]),
+                    (f"{prefix[0]}_fill_2", prefix[1]),
+                    (f"{prefix[0]}_fill_3", prefix[1]),
+                    (f"{prefix[0]}_fill_4", prefix[1]),
+                ], axis=1, inplace=True)
+
+        range_ld = self.copy().denormalize()
+        range_ld = range_ld.rangeify_elevations()
+        if self.label is not None:
+            convert_label(range_ld.label)
+        if self.pred is not None:
+            convert_label(range_ld.pred)
+        if self.data is not None:
+            convert_data(range_ld.data)
+
+        range_ld.scaler.fit(range_ld.data)
+        range_ld.elevation_class = True
+        if self.is_normalized:
+            return range_ld.normalize()
+        else:
+            return range_ld
+
+    def from_elev_class(self):
+        """Convert all elevation classes to elevations"""
+        if not self.elevation_class:
+            return self.copy()
+        MAX_ELEV = 2500
+
+        def find_min(series):
+            region = int(series.name[1])
+            is_middle = bool(float(series.values[0]))
+            tl = REGION_ELEV[region][0]
+            return tl if is_middle else 0
+
+        def find_max(series):
+            region = int(series.name[1])
+            is_middle = bool(float(series.values[0]))
+            tl = REGION_ELEV[region][1]
+            return tl if is_middle else MAX_ELEV
+
+        def convert_label(df):
+            problems = df.columns.get_level_values(1).unique().to_series().replace(_NONE, np.nan).dropna()
+            for problem in problems:
+                df["REAL", problem, "lev_min"] = df[[("CLASS", problem, "lev_min")]].apply(find_min, axis=1).apply(str)
+                df["REAL", problem, "lev_max"] = df[[("CLASS", problem, "lev_max")]].apply(find_max, axis=1).apply(str)
+                df["CLASS", problem, "lev_fill"] = "4"
+                df.drop([
+                    ("CLASS", problem, "lev_min"),
+                    ("CLASS", problem, "lev_max"),
+                ], axis=1, inplace=True)
+            df.sort_index(inplace=True, axis=1)
+
+        def convert_data(df):
+            prefixes = set(map(lambda y: (y[0][:-7], y[1]), filter(lambda x: re.search(r"lev_fill", x[0]), df.columns)))
+            for prefix in prefixes:
+                df[f"{prefix[0]}_min", prefix[1]] = df[[(f"{prefix[0]}_min", prefix[1])]].apply(find_min, axis=1)
+                df[f"{prefix[0]}_max", prefix[1]] = df[[(f"{prefix[0]}_max", prefix[1])]].apply(find_max, axis=1)
+                df[f"{prefix[0]}_fill_1", prefix[1]] = 0
+                df[f"{prefix[0]}_fill_2", prefix[1]] = 0
+                df[f"{prefix[0]}_fill_3", prefix[1]] = 0
+                df[f"{prefix[0]}_fill_4", prefix[1]] = 1
+            df.sort_index(inplace=True, axis=1)
+
+        range_ld = self.copy().denormalize()
+        if self.label is not None:
+            convert_label(range_ld.label)
+        if self.pred is not None:
+            convert_label(range_ld.pred)
+        if self.data is not None:
+            convert_data(range_ld.data)
+
+        range_ld.scaler.fit(range_ld.data)
+        range_ld.elevation_class = False
+        if self.is_normalized:
+            return range_ld.normalize()
+        else:
+            return range_ld
+
+    def to_elevation_fmt_1(self):
+        """Convert all elevations to format 1"""
+        MAX_ELEV = 2500
+
+        def convert_label(df):
+            problems = df.columns.get_level_values(1).unique().to_series().replace(_NONE, np.nan).dropna()
+            for problem in problems:
+                fill = df["CLASS", problem, "lev_fill"].apply(str)
+                twos = fill == "2"
+                threes = fill == "3"
+                fours = fill == "4"
+
+                df.loc[np.logical_or(twos, threes), ("REAL", problem, "lev_max")] = 0
+                df.loc[np.logical_or(twos, threes), ("REAL", problem, "lev_min")] = 0
+                df.loc[np.logical_or(twos, threes), ("CLASS", problem, "lev_fill")] = "1"
+
+                df.loc[fours, ("REAL", problem, "lev_max")] = df.loc[fours, ("REAL", problem, "lev_min")]
+                df.loc[fours, ("REAL", problem, "lev_min")] = 0
+                df.loc[fours, ("CLASS", problem, "lev_fill")] = "1"
+
+        def convert_data(df):
+            prefixes = set(map(lambda y: (y[0][:-7], y[1]), filter(lambda x: re.search(r"lev_fill", x[0]), df.columns)))
+            for prefix in prefixes:
+                ones = df[(f"{prefix[0]}_fill_1", prefix[1])].apply(np.bool)
+                twos = df[(f"{prefix[0]}_fill_2", prefix[1])].apply(np.bool)
+                threes = df[(f"{prefix[0]}_fill_3", prefix[1])].apply(np.bool)
+                fours = df[(f"{prefix[0]}_fill_4", prefix[1])].apply(np.bool)
+
+                df.loc[np.logical_or(twos, threes), (f"{prefix[0]}_min", prefix[1])] = 0
+                df.loc[np.logical_or(twos, threes), (f"{prefix[0]}_max", prefix[1])] = 0
+                df.loc[np.logical_or(twos, threes), (f"{prefix[0]}_fill_1", prefix[1])] = 1
+                df[(f"{prefix[0]}_fill_2", prefix[1])] = np.zeros(twos.shape)
+                df[(f"{prefix[0]}_fill_3", prefix[1])] = np.zeros(threes.shape)
+
+                df.loc[fours, (f"{prefix[0]}_max", prefix[1])] = df.loc[fours, (f"{prefix[0]}_min", prefix[1])]
+                df.loc[fours, (f"{prefix[0]}_min", prefix[1])] = 0
+                df.loc[threes == True, (f"{prefix[0]}_fill_4", prefix[1])] = 1
+                df[(f"{prefix[0]}_fill_3", prefix[1])] = np.zeros(threes.shape)
+
+        ld = self.copy().denormalize()
+        if self.label is not None:
+            convert_label(ld.label)
+        if self.pred is not None:
+            convert_label(ld.pred)
+        if self.data is not None:
+            convert_data(ld.data)
+
+        ld.scaler.fit(ld.data)
+        if self.is_normalized:
+            return ld.normalize()
+        else:
+            return ld
+
+    def rangeify_elevations(self):
+        """Convert all elevations to ranges"""
+        MAX_ELEV = 2500
+
+        def convert_label(df):
+            problems = df.columns.get_level_values(1).unique().to_series().replace(_NONE, np.nan).dropna()
+            for problem in problems:
+                fill = df["CLASS", problem, "lev_fill"].apply(str)
+                ones = fill == "1"
+                twos = fill == "2"
+                threes = fill == "3"
+
+                df.loc[ones, ("REAL", problem, "lev_min")] = df.loc[ones, ("REAL", problem, "lev_max")]
+                df.loc[ones, ("REAL", problem, "lev_max")] = MAX_ELEV
+                df.loc[ones, ("CLASS", problem, "lev_fill")] = "4"
+
+                df.loc[twos, ("REAL", problem, "lev_min")] = 0
+                df.loc[twos, ("CLASS", problem, "lev_fill")] = "4"
+
+                df.loc[threes, ("REAL", problem, "lev_min")] = 0
+                df.loc[threes, ("REAL", problem, "lev_max")] = MAX_ELEV
+                df.loc[threes, ("CLASS", problem, "lev_fill")] = "4"
+
+        def convert_data(df):
+            prefixes = set(map(lambda y: (y[0][:-7], y[1]), filter(lambda x: re.search(r"lev_fill", x[0]), df.columns)))
+            for prefix in prefixes:
+                ones = df[(f"{prefix[0]}_fill_1", prefix[1])].apply(np.bool)
+                twos = df[(f"{prefix[0]}_fill_2", prefix[1])].apply(np.bool)
+                threes = df[(f"{prefix[0]}_fill_3", prefix[1])].apply(np.bool)
+                fours = df[(f"{prefix[0]}_fill_4", prefix[1])].apply(np.bool)
+
+                df.loc[ones, (f"{prefix[0]}_min", prefix[1])] = df.loc[ones, (f"{prefix[0]}_max", prefix[1])]
+                df.loc[ones, (f"{prefix[0]}_max", prefix[1])] = MAX_ELEV
+                df.loc[ones == True, (f"{prefix[0]}_fill_4", prefix[1])] = 1
+                df[(f"{prefix[0]}_fill_1", prefix[1])] = np.zeros(ones.shape)
+
+                df.loc[twos, (f"{prefix[0]}_min", prefix[1])] = 0
+                df.loc[twos == True, (f"{prefix[0]}_fill_4", prefix[1])] = 1
+                df[(f"{prefix[0]}_fill_2", prefix[1])] = np.zeros(twos.shape)
+
+                df.loc[threes, (f"{prefix[0]}_min", prefix[1])] = 0
+                df.loc[threes, (f"{prefix[0]}_max", prefix[1])] = MAX_ELEV
+                df.loc[threes == True, (f"{prefix[0]}_fill_4", prefix[1])] = 1
+                df[(f"{prefix[0]}_fill_3", prefix[1])] = np.zeros(threes.shape)
+
+        ld = self.copy().denormalize()
+        if self.label is not None:
+            convert_label(ld.label)
+        if self.pred is not None:
+            convert_label(ld.pred)
+        if self.data is not None:
+            convert_data(ld.data)
+
+        ld.scaler.fit(ld.data)
+        if self.is_normalized:
+            return ld.normalize()
+        else:
+            return ld
 
     def valid_pred(self):
         """Makes the bulletins internally coherent. E.g., removes problem 3 if problem 2 is blank."""
@@ -431,6 +740,9 @@ class LabeledData:
             raise NotPredictedError
 
         ld = self.copy()
+
+        if self.elevation_class:
+            ld = ld.from_elev_class()
 
         # Handle Problem 1-3
         prob_cols = []
@@ -587,7 +899,6 @@ class LabeledData:
             ld.data.loc[:, ld.data.columns.get_level_values(1).values.astype(int) <= orig_days],
             to_time_parameters(ld)
         ], axis=1).sort_index()
-        ld.scaler = StandardScaler()
         ld.scaler.fit(ld.data.values)
         return ld
 
@@ -797,6 +1108,8 @@ class LabeledData:
             self.seasons
         )
         ld.is_normalized = self.is_normalized
+        ld.with_regions = self.with_regions
+        ld.elevation_class = self.elevation_class
         ld.scaler = self.scaler
         ld.pred = self.pred.copy(deep=True) if self.pred is not None else None
         return ld

@@ -1,3 +1,4 @@
+import json
 import math
 import os
 import pickle
@@ -6,11 +7,13 @@ import sys
 import datetime as dt
 import requests
 from concurrent import futures
+import numpy as np
 
-from avaml import _NONE, CSV_VERSION, REGIONS, merge, Error, setenvironment as se, varsomdata
+from avaml import _NONE, CSV_VERSION, REGIONS, merge, Error, setenvironment as se, varsomdata, REGION_NEIGH
 from varsomdata import getforecastapi as gf
 from varsomdata import getvarsompickles as gvp
 from varsomdata import getmisc as gm
+from varsomdata import getobservations as go
 
 _pwl = re.compile("(DH|SH|FC)")
 
@@ -214,6 +217,18 @@ REG_ENG = {
     "Skredproblem": "problem",
     "Skredfarevurdering": "danger",
     "Snøprofil": "snowprofile",
+    "AvalancheIndex": "avalancheidx",
+}
+
+REG_ENG_V4 = {
+    "Faretegn": "DangerObs",
+    "Tester": "CompressionTest",
+    "Skredaktivitet": "AvalancheActivityObs2",
+    "Skredhendelse": "AvalancheObs",
+    "Snødekke": "SnowSurfaceObservation",
+    "Skredproblem": "AvalancheEvalProblem2",
+    "Skredfarevurdering": "AvalancheEvaluation3",
+    "Snøprofil": "SnowProfile2",
 }
 
 # Transformations for RegObs Classes
@@ -231,7 +246,7 @@ REGOBS_CLASSES = {
         }
     },
     "Tester": {
-        "PropagationTName": {
+        "PropagationName": {
             "ECTPV": "ectpv",
             "ECTP": "ectp",
             "ECTN": "ectn",
@@ -331,10 +346,10 @@ REGOBS_SCALARS = {
     },
     "Skredhendelse": {
         "DestructiveSize": ("DestructiveSizeTID", lambda x: x if 0 < x <= 5 else 0),
-        "FractureHeight": ("FractureHeigth", lambda x: x),  # sic
+        "FractureHeight": ("FractureHeight", lambda x: x),
         "FractureWidth": ("FractureWidth", lambda x: x),
-        "HeightStartZone": ("HeigthStartZone", lambda x: x),  # sic
-        "HeightStopZone": ("HeigthStopZone", lambda x: x),  # sic
+        "HeightStartZone": ("HeightStartZone", lambda x: x),
+        "HeightStopZone": ("HeightStopZone", lambda x: x),
         "ValidExpositionN": ("ValidExposition", lambda x: float(x[0])),
         "ValidExpositionNE": ("ValidExposition", lambda x: float(x[1])),
         "ValidExpositionE": ("ValidExposition", lambda x: float(x[2])),
@@ -347,7 +362,7 @@ REGOBS_SCALARS = {
     "Snødekke": {
         "SnowDepth": ("SnowDepth", lambda x: x),
         "NewSnowDepth24": ("NewSnowDepth24", lambda x: x),
-        "Snowline": ("Snowline", lambda x: x),
+        "Snowline": ("SnowLine", lambda x: x),
         "NewSnowline": ("NewSnowLine", lambda x: x),
         "HeightLimitLayeredSnow": ("HeightLimitLayeredSnow", lambda x: x),
         "SnowDrift": ("SnowDriftTID", lambda x: x),
@@ -583,6 +598,8 @@ def _get_weather_obs(year, date=None, days=None, max_file_age=23):
 def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23):
     regions = gm.get_forecast_regions(year=year, get_b_regions=True)
     observations = {}
+    observations_neigh = {}
+    varsomdata_obses = {}
 
     if len(requested_types) == 0:
         return observations
@@ -608,51 +625,67 @@ def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23
     else:
         from_date, to_date = gm.get_dates_from_season(year=year)
 
-    req_set = set(requested_types)
+    if "AvalancheIndex" in requested_types:
+        avalanche_index = True
+    else:
+        avalanche_index = False
+
+    req_set = set(requested_types) & set(REG_ENG_V4.keys())
+
     # Make sure all requested elements from RegObs actually have the information we need specified
     if not min(map(lambda x: set(list(x.keys())).issuperset(req_set), [REGOBS_CLASSES, REGOBS_SCALARS, REG_ENG])):
         raise RegObsRegTypeError()
 
-    url = "https://api.nve.no/hydrology/regobs/webapi_v3.2.0/Search/Avalanche"
+    url = "https://api.regobs.no/v4/Search"
     query = {
         "LangKey": 1,
         "FromDate": from_date.isoformat(),
         "ToDate": to_date.isoformat(),
-        "SelectedRegistrationTypes": [],
+        "SelectedRegistrationTypes": None,
         "SelectedRegions": regions,
         "NumberOfRecords": number_of_records,
         "Offset": 0
     }
 
     results = []
+
+    def send_req(queries):
+        query = queries.pop()
+        try:
+            req = requests.post(url=url, json=query)
+            return (req, query)
+        except:
+            return (None, query)
+
     if get_new:
         future_tuples = []
 
-        first = requests.post(url=url, json=query).json()
-        results = results + first["Results"]
-        total_matches = first['TotalMatches']
-        searched = number_of_records
+        total_matches = requests.post(url=url + "/Count", json=query).json()["TotalMatches"]
 
         with futures.ThreadPoolExecutor(140) as executor:
-            while searched < total_matches:
+            queries = []
+            while query["Offset"] < total_matches:
+                queries.append(query.copy())
                 query["Offset"] += number_of_records
-                query_copy = query.copy()
-                future = executor.submit(lambda: requests.post(url=url, json=query_copy))
-                future_tuples.append((query_copy, query["Offset"], 0, future))
-                searched += number_of_records
+
+            for _ in range(0, len(queries)):
+                future = executor.submit(send_req, queries)
+                future_tuples.append((0, future))
 
             while len(future_tuples):
-                query, offset, retries, future = future_tuples.pop()
+                retries, future = future_tuples.pop()
                 try:
-                    raw_obses = future.result().json()
+                    response, query = future.result()
+                    raw_obses = response.json()
                 except:
                     if retries < 5:
-                        future = executor.submit(lambda: requests.post(url=url, json=query))
-                        future_tuples.insert(0, (query, query["Offset"], retries + 1, future))
+                        future = executor.submit(send_req, [query])
+                        future_tuples.insert(0, (retries + 1, future))
                     else:
+                        offset = json.loads(response.request.body)["Offset"]
                         print(f"Failed to fetch regobs, offset {offset}, skipping", file=sys.stderr)
                     continue
-                results = results + raw_obses["Results"]
+                results = results + raw_obses
 
         if not date:
             with open(file_name, 'wb') as handle:
@@ -666,49 +699,74 @@ def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23
             return _get_regobs_obs(regions, year, requested_types, max_file_age)
 
     for raw_obs in results:
-        for reg in raw_obs["Registrations"]:
-            obs_type = reg["RegistrationName"]
-            if obs_type not in requested_types:
+        date = dt.datetime.fromisoformat(raw_obs["DtObsTime"]).date()
+        key = (date.isoformat(), raw_obs["ObsLocation"]["ForecastRegionTID"])
+        if key not in observations:
+            observations[key] = {}
+            observations_neigh[key] = {}
+            varsomdata_obses[key] = []
+        for obs_type in req_set:
+            if REG_ENG_V4[obs_type] not in raw_obs or not raw_obs[REG_ENG_V4[obs_type]]:
                 continue
+            reg = raw_obs[REG_ENG_V4[obs_type]]
+
             # Ignore snow profiles of the old format
-            if obs_type == "Snøprofil" and "StratProfile" not in reg["FullObject"]:
+            if obs_type == "Snøprofil" and "StratProfile" not in reg:
                 continue
 
             obs = {
-                "competence": raw_obs["CompetenceLevelTid"]
+                "competence": raw_obs["Observer"]["CompetenceLevelTID"]
             }
             try:
                 for attr, categories in REGOBS_CLASSES[obs_type].items():
-                    value = reg["FullObject"][attr]
                     for cat_id, cat_name in categories.items():
-                        obs[cat_name] = 1 if cat_id == value else 0
+                        if isinstance(reg, list):
+                            obs[cat_name] = 1 if cat_id in map(lambda x: x[attr],reg) else 0
+                        else:
+                            obs[cat_name] = 1 if cat_id == reg[attr] else 0
             except KeyError:
                 pass
             try:
                 for regobs_attr, conv in REGOBS_SCALARS[obs_type].values():
-                    obs[regobs_attr] = reg["FullObject"][regobs_attr]
+                    obs[regobs_attr] = 0
+                    if isinstance(reg, list) and len(reg) > 0:
+                        obs[regobs_attr] = reg[0][regobs_attr]
+                    elif not isinstance(reg, list):
+                        obs[regobs_attr] = reg[regobs_attr]
+                    if obs[regobs_attr] is None:
+                        obs[regobs_attr] = 0
             except KeyError:
                 pass
 
-            date = dt.datetime.fromisoformat(raw_obs["DtObsTime"]).date()
-            key = (date.isoformat(), raw_obs["ForecastRegionTid"])
-            if key not in observations:
-                observations[key] = {}
             if obs_type not in observations[key]:
                 observations[key][obs_type] = []
             observations[key][obs_type].append(obs)
+        varsomdata_obses[key] += go.Observation(raw_obs).Observations
 
     # We want the most competent observations first
-    for date_region in observations.values():
-        for reg_type in date_region.values():
+    for key, date_region in observations.items():
+        for reg_key, reg_type in date_region.items():
             reg_type.sort(key=lambda x: x['competence'], reverse=True)
+            observations_neigh[key][reg_key] = reg_type.copy()
+
+    rng = np.random.default_rng(1984)
+    for (date, region), date_region in observations.items():
+        for reg_key in date_region.keys():
+            reg_neigh = []
+            for neighbour in rng.permutation(REGION_NEIGH[region]):
+                try:
+                    reg_neigh += observations[(date, neighbour)][reg_key]
+                except KeyError:
+                    pass
+            reg_neigh.sort(key=lambda x: x['competence'], reverse=True)
+            observations_neigh[(date, region)][reg_key] += reg_neigh
 
     df_dict = {}
-    for key, observation in observations.items():
-        # Use 5 most competent observations, and list both categories as well as scalars
-        for obs_idx in range(0, 5):
+    for key, observation in observations_neigh.items():
+        # Use 2 most competent observations, and list both categories as well as scalars
+        for obs_idx in range(0, 2):
             # One type of observation (test, danger signs etc.) at a time
-            for regobs_type in requested_types:
+            for regobs_type in req_set:
                 obses = observation[regobs_type] if regobs_type in observation else []
                 # Go through each requested class attribute from the specified observation type
                 for attr, cat in REGOBS_CLASSES[regobs_type].items():
@@ -734,6 +792,15 @@ def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23
             lambda x: {0: 0, 1: 1, 2: -1, 3: -1}[x['ForecastCorrectTID']],
             observation['Skredfarevurdering']
         )) if 'Skredfarevurdering' in observation else 0
+
+        if avalanche_index:
+            if "regobs_avalancheidx" not in df_dict:
+                df_dict["regobs_avalancheidx"] = {}
+            avalanche_indices = list(map(lambda x: x.index, gm.get_avalanche_index(varsomdata_obses[key])))
+            if avalanche_indices:
+                df_dict['regobs_avalancheidx'][key] = max(avalanche_indices)
+            else:
+                df_dict['regobs_avalancheidx'][key] = 0
 
     return df_dict
 
