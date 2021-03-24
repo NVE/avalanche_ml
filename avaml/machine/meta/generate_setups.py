@@ -39,16 +39,29 @@ regobs_types = [
     "Skredfarevurdering"
 ]
 
-setup = [
-    (0, False, [], False),
-    (0, False, [], True),
-    (1, False, [], False),
-    (1, False, [], True),
-    (1, True, [], False),
-    (1, True, [], True),
+secondary_variations = [
+    (False, False, False, False, False, False, False, False, False),
+    (True, False, False, False, False, False, False, False, False),
+    (False, True, False, False, False, False, False, False, False),
+    (False, False, True, False, False, False, False, False, False),
+    (False, False, False, True, False, False, False, False, False),
+    (False, False, False, False, True, False, False, False, False),
+    (False, False, False, False, False, True, False, False, False),
+    (False, False, False, False, False, False, True, False, False),
+    (False, False, False, False, False, False, False, True, False),
+    (False, False, False, False, False, False, False, False, True),
 ]
-for days in [2, 3, 5, 7, 10, 14]:
+
+setup = []
+for days in [0, 1, 2, 3, 5, 7, 10, 14]:
     for varsom in [False, True]:
-        for regobs in [[], regobs_types]:
-            for temp in [False, True]:
-                setup.append((days, varsom, regobs, temp))
+        for regobs in [[]] + list(map(lambda x: [x], regobs_types)):
+            for variation in secondary_variations:
+                noregions, nocause, temp, collapse, adam, fmt1, fmt4, levels, avy_idx = variation
+                if nocause and days < 1:
+                    continue
+                if (regobs or avy_idx) and days < 2:
+                    continue
+                if collapse and days <= 2:
+                    continue
+                setup.append((days, varsom, regobs) + variation)
