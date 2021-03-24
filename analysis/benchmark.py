@@ -7,12 +7,12 @@ import matplotlib.pyplot as plt
 
 from sklearn.cluster import AgglomerativeClustering
 
+root = f"{os.path.dirname(os.path.abspath(__file__))}/.."
+sys.path.insert(0, root)
+
 from avaml.machine.meta import setup, regobs_types
 from avaml.machine.naive.naive_yesterday import NaiveYesterday
 from avaml.machine.sk_clustered import SKClusteringMachine
-
-root = f"{os.path.dirname(os.path.abspath(__file__))}/.."
-sys.path.insert(0, root)
 
 from avaml.aggregatedata.__init__ import ForecastDataset, LabeledData, REG_ENG, CsvMissingError
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
