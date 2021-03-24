@@ -163,11 +163,15 @@ class ForecastDataset:
         self.use_label = True
 
         for season in seasons:
+            print(season)
+            print("varsom")
             varsom, labels = _get_varsom_obs(year=season, max_file_age=max_file_age)
             self.varsom = merge(self.varsom, varsom)
             self.labels = merge(self.labels, labels)
+            print("regobs")
             regobs = _get_regobs_obs(season, regobs_types, max_file_age=max_file_age)
             self.regobs = merge(self.regobs, regobs)
+            print("weather")
             weather = _get_weather_obs(season, max_file_age=max_file_age)
             self.weather = merge(self.weather, weather)
 
@@ -324,7 +328,7 @@ class ForecastDataset:
 class LabeledData:
     is_normalized = False
     with_regions = True
-    elevation_class = False
+    elevation_class = (False, False)
     scaler = StandardScaler()
 
     def __init__(self, data, label, row_weight, days, regobs_types, with_varsom, seasons=False):
@@ -508,10 +512,12 @@ class LabeledData:
         ld.pred = ld.pred.apply(get_danger, axis=1)
         return ld
 
-    def to_elev_class(self):
+    def to_elev_class(self, exclude_label=False):
         """Convert all elevations to classes"""
-        if self.elevation_class:
+        if self.elevation_class == (True, exclude_label):
             return self.copy()
+        elif self.elevation_class == (True, not exclude_label):
+            return self.from_elev_class().to_elev_class(exclude_label)
         MAX_ELEV = 2500
 
         def round_min(series):
@@ -551,8 +557,8 @@ class LabeledData:
                 ], axis=1, inplace=True)
 
         range_ld = self.copy().denormalize()
-        range_ld = range_ld.rangeify_elevations()
-        if self.label is not None:
+        range_ld = range_ld.to_elevation_fmt_4(exclude_label)
+        if self.label is not None and not exclude_label:
             convert_label(range_ld.label)
         if self.pred is not None:
             convert_label(range_ld.pred)
@@ -560,7 +566,7 @@ class LabeledData:
             convert_data(range_ld.data)
 
         range_ld.scaler.fit(range_ld.data)
-        range_ld.elevation_class = True
+        range_ld.elevation_class = (True, exclude_label)
         if self.is_normalized:
             return range_ld.normalize()
         else:
@@ -568,8 +574,9 @@ class LabeledData:
 
     def from_elev_class(self):
         """Convert all elevation classes to elevations"""
-        if not self.elevation_class:
+        if not self.elevation_class[0]:
             return self.copy()
+        exclude_label = self.elevation_class[1]
         MAX_ELEV = 2500
 
         def find_min(series):
@@ -608,7 +615,7 @@ class LabeledData:
             df.sort_index(inplace=True, axis=1)
 
         range_ld = self.copy().denormalize()
-        if self.label is not None:
+        if self.label is not None and not exclude_label:
             convert_label(range_ld.label)
         if self.pred is not None:
             convert_label(range_ld.pred)
@@ -622,7 +629,7 @@ class LabeledData:
         else:
             return range_ld
 
-    def to_elevation_fmt_1(self):
+    def to_elevation_fmt_1(self, exclude_label=False):
         """Convert all elevations to format 1"""
         MAX_ELEV = 2500
 
@@ -662,7 +669,7 @@ class LabeledData:
                 df[(f"{prefix[0]}_fill_3", prefix[1])] = np.zeros(threes.shape)
 
         ld = self.copy().denormalize()
-        if self.label is not None:
+        if self.label is not None and not exclude_label:
             convert_label(ld.label)
         if self.pred is not None:
             convert_label(ld.pred)
@@ -675,7 +682,7 @@ class LabeledData:
         else:
             return ld
 
-    def rangeify_elevations(self):
+    def to_elevation_fmt_4(self, exclude_label=False):
         """Convert all elevations to ranges"""
         MAX_ELEV = 2500
 
@@ -721,7 +728,7 @@ class LabeledData:
                 df[(f"{prefix[0]}_fill_3", prefix[1])] = np.zeros(threes.shape)
 
         ld = self.copy().denormalize()
-        if self.label is not None:
+        if self.label is not None and not exclude_label:
             convert_label(ld.label)
         if self.pred is not None:
             convert_label(ld.pred)
