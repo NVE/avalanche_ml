@@ -144,6 +144,8 @@ for days, varsom, regobs, noregions, nocause, temp, collapse, adam, fmt1, fmt4, 
         predicted_data = bm.predict(testing_data)
         if levels:
             predicted_data = predicted_data.from_elev_class()
+        if adam:
+            predicted_data = predicted_data.adam()
         f1 = predicted_data.f1()
 
         print("Writing F1 scores")
@@ -167,6 +169,8 @@ for days, varsom, regobs, noregions, nocause, temp, collapse, adam, fmt1, fmt4, 
         predicted_data = bm.predict(testing_data)
         if levels:
             predicted_data = predicted_data.from_elev_class()
+        if adam:
+            predicted_data = predicted_data.adam()
         f1 = predicted_data.f1()
 
         print("Writing F1 scores")
