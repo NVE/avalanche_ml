@@ -622,6 +622,59 @@ class LabeledData:
         else:
             return range_ld
 
+    def to_elevation_fmt_1(self):
+        """Convert all elevations to format 1"""
+        MAX_ELEV = 2500
+
+        def convert_label(df):
+            problems = df.columns.get_level_values(1).unique().to_series().replace(_NONE, np.nan).dropna()
+            for problem in problems:
+                fill = df["CLASS", problem, "lev_fill"].apply(str)
+                twos = fill == "2"
+                threes = fill == "3"
+                fours = fill == "4"
+
+                df.loc[np.logical_or(twos, threes), ("REAL", problem, "lev_max")] = 0
+                df.loc[np.logical_or(twos, threes), ("REAL", problem, "lev_min")] = 0
+                df.loc[np.logical_or(twos, threes), ("CLASS", problem, "lev_fill")] = "1"
+
+                df.loc[fours, ("REAL", problem, "lev_max")] = df.loc[fours, ("REAL", problem, "lev_min")]
+                df.loc[fours, ("REAL", problem, "lev_min")] = 0
+                df.loc[fours, ("CLASS", problem, "lev_fill")] = "1"
+
+        def convert_data(df):
+            prefixes = set(map(lambda y: (y[0][:-7], y[1]), filter(lambda x: re.search(r"lev_fill", x[0]), df.columns)))
+            for prefix in prefixes:
+                ones = df[(f"{prefix[0]}_fill_1", prefix[1])].apply(np.bool)
+                twos = df[(f"{prefix[0]}_fill_2", prefix[1])].apply(np.bool)
+                threes = df[(f"{prefix[0]}_fill_3", prefix[1])].apply(np.bool)
+                fours = df[(f"{prefix[0]}_fill_4", prefix[1])].apply(np.bool)
+
+                df.loc[np.logical_or(twos, threes), (f"{prefix[0]}_min", prefix[1])] = 0
+                df.loc[np.logical_or(twos, threes), (f"{prefix[0]}_max", prefix[1])] = 0
+                df.loc[np.logical_or(twos, threes), (f"{prefix[0]}_fill_1", prefix[1])] = 1
+                df[(f"{prefix[0]}_fill_2", prefix[1])] = np.zeros(twos.shape)
+                df[(f"{prefix[0]}_fill_3", prefix[1])] = np.zeros(threes.shape)
+
+                df.loc[fours, (f"{prefix[0]}_max", prefix[1])] = df.loc[fours, (f"{prefix[0]}_min", prefix[1])]
+                df.loc[fours, (f"{prefix[0]}_min", prefix[1])] = 0
+                df.loc[threes == True, (f"{prefix[0]}_fill_4", prefix[1])] = 1
+                df[(f"{prefix[0]}_fill_3", prefix[1])] = np.zeros(threes.shape)
+
+        ld = self.copy().denormalize()
+        if self.label is not None:
+            convert_label(ld.label)
+        if self.pred is not None:
+            convert_label(ld.pred)
+        if self.data is not None:
+            convert_data(ld.data)
+
+        ld.scaler.fit(ld.data)
+        if self.is_normalized:
+            return ld.normalize()
+        else:
+            return ld
+
     def rangeify_elevations(self):
         """Convert all elevations to ranges"""
         MAX_ELEV = 2500
@@ -663,7 +716,7 @@ class LabeledData:
                 df[(f"{prefix[0]}_fill_2", prefix[1])] = np.zeros(twos.shape)
 
                 df.loc[threes, (f"{prefix[0]}_min", prefix[1])] = 0
-                df.loc[threes, (f"{prefix[0]}_min", prefix[1])] = MAX_ELEV
+                df.loc[threes, (f"{prefix[0]}_max", prefix[1])] = MAX_ELEV
                 df.loc[threes == True, (f"{prefix[0]}_fill_4", prefix[1])] = 1
                 df[(f"{prefix[0]}_fill_3", prefix[1])] = np.zeros(threes.shape)
 
