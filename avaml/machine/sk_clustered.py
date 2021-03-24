@@ -138,7 +138,8 @@ class SKClusteringMachine(BulletinMachine):
         ld = labeled_data.copy()
         ld.pred = y
         ld.pred = ld.pred.fillna("").astype("U")
-        ld.pred["REAL"] = ld.pred["REAL"].replace("", 0).astype(np.float)
+        if "REAL" in ld.pred.columns.get_level_values(0):
+            ld.pred["REAL"] = ld.pred["REAL"].replace("", 0).astype(np.float)
         return ld
 
     def feature_importances(self):

@@ -619,7 +619,7 @@ class LabeledData:
             convert_data(range_ld.data)
 
         range_ld.scaler.fit(range_ld.data)
-        range_ld.elevation_class = False
+        range_ld.elevation_class = (False, False)
         if self.is_normalized:
             return range_ld.normalize()
         else:
