@@ -163,15 +163,11 @@ class ForecastDataset:
         self.use_label = True
 
         for season in seasons:
-            print(season)
-            print("varsom")
             varsom, labels = _get_varsom_obs(year=season, max_file_age=max_file_age)
             self.varsom = merge(self.varsom, varsom)
             self.labels = merge(self.labels, labels)
-            print("regobs")
             regobs = _get_regobs_obs(season, regobs_types, max_file_age=max_file_age)
             self.regobs = merge(self.regobs, regobs)
-            print("weather")
             weather = _get_weather_obs(season, max_file_age=max_file_age)
             self.weather = merge(self.weather, weather)
 
