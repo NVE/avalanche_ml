@@ -7,8 +7,9 @@ import sys
 import datetime as dt
 import requests
 from concurrent import futures
+import numpy as np
 
-from avaml import _NONE, CSV_VERSION, REGIONS, merge, Error, setenvironment as se, varsomdata
+from avaml import _NONE, CSV_VERSION, REGIONS, merge, Error, setenvironment as se, varsomdata, REGION_NEIGH
 from varsomdata import getforecastapi as gf
 from varsomdata import getvarsompickles as gvp
 from varsomdata import getmisc as gm
@@ -597,6 +598,7 @@ def _get_weather_obs(year, date=None, days=None, max_file_age=23):
 def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23):
     regions = gm.get_forecast_regions(year=year, get_b_regions=True)
     observations = {}
+    observations_neigh = {}
     varsomdata_obses = {}
 
     if len(requested_types) == 0:
@@ -701,6 +703,7 @@ def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23
         key = (date.isoformat(), raw_obs["ObsLocation"]["ForecastRegionTID"])
         if key not in observations:
             observations[key] = {}
+            observations_neigh[key] = {}
             varsomdata_obses[key] = []
         for obs_type in req_set:
             if REG_ENG_V4[obs_type] not in raw_obs or not raw_obs[REG_ENG_V4[obs_type]]:
@@ -741,14 +744,27 @@ def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23
         varsomdata_obses[key] += go.Observation(raw_obs).Observations
 
     # We want the most competent observations first
-    for date_region in observations.values():
-        for reg_type in date_region.values():
+    for key, date_region in observations.items():
+        for reg_key, reg_type in date_region.items():
             reg_type.sort(key=lambda x: x['competence'], reverse=True)
+            observations_neigh[key][reg_key] = reg_type.copy()
+
+    rng = np.random.default_rng(1984)
+    for (date, region), date_region in observations.items():
+        for reg_key in date_region.keys():
+            reg_neigh = []
+            for neighbour in rng.permutation(REGION_NEIGH[region]):
+                try:
+                    reg_neigh += observations[(date, neighbour)][reg_key]
+                except KeyError:
+                    pass
+            reg_neigh.sort(key=lambda x: x['competence'], reverse=True)
+            observations_neigh[(date, region)][reg_key] += reg_neigh
 
     df_dict = {}
-    for key, observation in observations.items():
-        # Use 5 most competent observations, and list both categories as well as scalars
-        for obs_idx in range(0, 5):
+    for key, observation in observations_neigh.items():
+        # Use 2 most competent observations, and list both categories as well as scalars
+        for obs_idx in range(0, 2):
             # One type of observation (test, danger signs etc.) at a time
             for regobs_type in req_set:
                 obses = observation[regobs_type] if regobs_type in observation else []
