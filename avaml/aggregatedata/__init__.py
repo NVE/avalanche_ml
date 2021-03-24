@@ -803,7 +803,16 @@ class LabeledData:
         train_regions = [3007, 3012, 3010, 3009, 3013, 3017, 3014, 3032, 3027, 3029, 3022, 3031, 3023, 3037, 3024, 3028]
         test_regions = [3011, 3016, 3035]
         eval_regions = [3006, 3015, 3034]
-        return [(train_regions, test_regions, eval_regions)]
+
+        split = []
+        for regions in [train_regions, test_regions, eval_regions]:
+            ld = self.copy()
+            ld.data = ld.data.iloc[[region in regions for region in ld.data.index.get_level_values(1)]]
+            ld.label = ld.label.iloc[[region in regions for region in ld.label.index.get_level_values(1)]]
+            ld.pred = ld.pred.iloc[[region in regions for region in ld.pred.index.get_level_values(1)]]
+            ld.row_weight = ld.row_weight.iloc[[region in regions for region in ld.row_weight.index.get_level_values(1)]]
+            split.append(ld)
+        return [tuple(split)]
 
     def f1(self):
         """Get F1, precision, recall and RMSE of all labels.
