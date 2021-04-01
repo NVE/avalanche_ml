@@ -818,7 +818,7 @@ class LabeledData:
         return [tuple(split)]
 
     def f1(self):
-        """Get F1, precision, recall and RMSE of all labels.
+        """Get F1, precision, recall, share (of category in column), and RMSE of all labels.
 
         :return: Series with scores of all possible labels and values.
         """
@@ -829,7 +829,7 @@ class LabeledData:
         old_settings = np.seterr(divide='ignore', invalid='ignore')
 
         df_idx = pd.MultiIndex.from_arrays([[], [], [], []])
-        df = pd.DataFrame(index=df_idx, columns=["f1", "precision", "recall", "rmse"])
+        df = pd.DataFrame(index=df_idx, columns=["f1", "precision", "recall", "share", "rmse"])
 
         try:
             prob_cols = [
@@ -853,6 +853,7 @@ class LabeledData:
                 truth = dummies["label"][column][idx]
                 pred = pred_series[idx]
                 true_pos = np.sum(truth * pred)
+                share = np.sum(truth) / dummies["label"][column[:3]].loc[idx].sum().sum()
 
                 if not np.sum(truth) or (column[0] == "CLASS" and column[1] and column[3] == "0"):
                     continue
@@ -861,7 +862,7 @@ class LabeledData:
                 recall = true_pos / np.sum(truth)
                 f1 = 2 * prec * recall / (prec + recall) if prec + recall else 0
 
-                df.loc[column] = pd.Series([f1, prec, recall, np.nan], index=df.columns)
+                df.loc[column] = pd.Series([f1, prec, recall, share, np.nan], index=df.columns)
             elif column[0] in ["REAL"] and column in dummies["label"].columns:
                 truth = dummies["label"][column][idx]
                 pred = pred_series[idx]
@@ -871,7 +872,7 @@ class LabeledData:
 
                 rmse = np.sqrt(np.sum(np.square(pred - truth))) / len(truth)
 
-                df.loc[column] = pd.Series([np.nan, np.nan, np.nan, rmse], index=df.columns)
+                df.loc[column] = pd.Series([np.nan, np.nan, np.nan, np.nan, rmse], index=df.columns)
 
         np.seterr(**old_settings)
         return df
