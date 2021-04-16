@@ -11,7 +11,8 @@ setup(name     = 'avalanche_ml',
       packages = ['analysis',
                   'avaml',
                   'avaml.machine',
-                  'modeling'],
+                  'modeling',
+                  'utils'],
 
       install_requires = ['numpy>1.17.0', 'pandas>1.0.0', 'matplotlib>3.0.0']
      )
