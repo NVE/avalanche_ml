@@ -486,6 +486,126 @@ def plot_region_problems(labels, idx_list, col_list):
 
     ax[3, 2].set_axis_off()
     plt.show()
+    
+    
+#######################
+#######################
+#  Danger Level Plots
+#######################
+#######################
+
+def plot_dl_weather(dl_list):
+    """
+    Plot columns for temperature, precipitation, windspeed and freezing level for each danger level.
+    
+    Arguments:
+        dl_list(list): dataframes representing data already separated into danger levels
+    
+    Returns:
+        None
+    """
+    dl1, dl2, dl3, dl4 = dl_list
+    plot_list = ['temp_min_0', 'temp_max_0', 'precip_0', 'wind_speed_0', 'temp_lev_0', 'temp_freeze_lev_0']
+    
+    drop_condition_1 = dl1['precip_0'].values != 0
+    drop_condition_2 = dl2['precip_0'].values != 0
+    drop_condition_3 = dl3['precip_0'].values != 0
+    drop_condition_4 = dl4['precip_0'].values != 0
+
+    row, col = 0, 0
+
+    plot_kwargs = {
+        "alpha": 0.5,
+        "rwidth":0.95,
+        "bins":50,
+        "density": True
+    }
+
+    fig, ax = plt.subplots(2, 3, figsize=(16, 12))
+
+    # drop where precipitation is 0 so we can see values better
+    for i, column in enumerate(plot_list):
+        if column == 'precip_0':
+            ax[row, col].hist(dl1[column].values[drop_condition_1], label='DL 1', **plot_kwargs)
+            ax[row, col].hist(dl2[column].values[drop_condition_2], label='DL 2', **plot_kwargs)
+            ax[row, col].hist(dl3[column].values[drop_condition_3], label='DL 3', **plot_kwargs)
+            ax[row, col].hist(dl4[column].values[drop_condition_4], label='DL 3', **plot_kwargs)
+    
+        # we can plot these values side by side because they are discrete, not continuous
+        elif column == 'wind_speed_0' or column == 'temp_lev_0':
+            plot_dfs = [dl1[column], dl2[column], dl3[column], dl4[column]]
+            hist_labels = ['DL 1', 'DL 2', 'DL 3', 'DL 4']
+            ax[row, col].hist(plot_dfs, bins=10, alpha=0.7, label=hist_labels)
+
+        else:
+            ax[row, col].hist(dl1[column].values, label='DL 1', **plot_kwargs)
+            ax[row, col].hist(dl2[column].values, label='DL 2', **plot_kwargs)
+            ax[row, col].hist(dl3[column].values, label='DL 3', **plot_kwargs)
+            ax[row, col].hist(dl4[column].values, label='DL 4', **plot_kwargs)
+
+        ax[row, col].set_xlabel(' ')
+        ax[row, col].set_title(column)
+        ax[row, col].legend(bbox_to_anchor=(1.0, 1.0))
+
+        # update row and column for to move to next plot
+        if(col < 2):
+            col += 1
+        else: 
+            col = 0
+
+        if((i+1) % 3 == 0 and i > 0):
+            row += 1
+
+    ax[0, 0].set_ylabel('Normalized count')
+    ax[1, 0].set_ylabel('Normalized count')
+    plt.show()
+    
+    
+def plot_dl_custom_wx(dl_list):
+    """
+    Plot columns custom features for precip, wind speed max, and temp over the last 72 hours.
+    
+    Arguments:
+        dl_list(list): dataframes representing data already separated into danger levels
+    
+    Returns:
+        None
+    """
+    dl1, dl2, dl3, dl4 = dl_list
+    plot_list = ['wind_speed_72hr', 'precip_72hr', 'temp_max_72hr']
+    
+    drop_condition_1 = dl1['precip_0'].values != 0
+    drop_condition_2 = dl2['precip_0'].values != 0
+    drop_condition_3 = dl3['precip_0'].values != 0
+    drop_condition_4 = dl4['precip_0'].values != 0
+
+    col = 0
+
+    plot_kwargs = {
+        "alpha": 0.5,
+        "rwidth":0.95,
+        "bins":50,
+        "density": True
+    }
+
+    fig, ax = plt.subplots(1, 3, figsize=(16, 6))
+
+    # drop where precipitation is 0 so we can see values better
+    for i, column in enumerate(plot_list):
+        ax[col].hist(dl1[column].values[drop_condition_1], label='DL 1', **plot_kwargs)
+        ax[col].hist(dl2[column].values[drop_condition_2], label='DL 2', **plot_kwargs)
+        ax[col].hist(dl3[column].values[drop_condition_3], label='DL 3', **plot_kwargs)
+        ax[col].hist(dl4[column].values[drop_condition_4], label='DL 4', **plot_kwargs)
+
+        ax[col].set_xlabel(' ')
+        ax[col].set_title(column)
+        ax[col].legend(bbox_to_anchor=(1.0, 1.0))
+        
+        col += 1
+
+    ax[0].set_ylabel('Normalized count')
+    plt.show()
+
 
 #######################
 #######################

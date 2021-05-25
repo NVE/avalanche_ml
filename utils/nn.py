@@ -112,6 +112,41 @@ def create_dnn(X, n_input, dropout, n_output, add_reg=False):
     return dnn
 
 
+def create_dnn_deep(X, n_input, num_layers, dropout, n_output, add_reg=False):
+    """
+    Create a DNN with or without regularization. Note: X should have
+    shape (samples, timesteps, features)
+    """
+    timesteps = X.shape[1]
+    features = X.shape[2]
+    
+    # add initial layer
+    dnn = tf.keras.models.Sequential()
+    if(add_reg == True):
+        reg = tf.keras.regularizers.l2(l=0.0001)
+        dnn.add(Dense(n_input, activation='elu', kernel_regularizer=reg, input_shape=(timesteps, features)))
+        dnn.add(Dropout(dropout))
+        
+    else:
+        dnn.add(Dense(n_input, activation='elu', input_shape=(timesteps, features)))
+        dnn.add(Dropout(dropout))
+    
+    # add layers from 1 up to num_layers
+    for i in range(1, num_layers):
+        if(add_reg == True):
+            dnn.add(Dense(n_input, activation='elu', kernel_regularizer=reg))
+            dnn.add(Dropout(dropout))
+
+        else:
+            dnn.add(Dense(n_input, activation='elu'))
+            dnn.add(Dropout(dropout))
+    
+    dnn.add(tf.keras.layers.Flatten())
+    dnn.add(Dense(n_output, activation='sigmoid'))
+    
+    return dnn
+
+
 def create_rnn(X, n_input, n_dense, dropout, n_output, add_reg=False):
     """
     Create a RNN with or without regularization. Note: X should have
