@@ -27,8 +27,8 @@ SCORE_MAP = {
     "danger_level": [("global", "danger_level")],
     "emergency_warning": [("global", "emergency_warning")],
     "problem_1": [("problem_1", "loose"), ("problem_1", "wet")],
-    "problem_2": [("problem_1", "loose"), ("problem_1", "wet")],
-    "problem_3": [("problem_1", "loose"), ("problem_1", "wet")],
+    "problem_2": [("problem_2", "loose"), ("problem_2", "wet")],
+    "problem_3": [("problem_3", "loose"), ("problem_3", "wet")],
     "problem_amount": [("problem_1", "loose"), ("problem_1", "wet")],
     "cause": [("problem_1", "freq")],
     "dist": [("problem_1", "freq")],
@@ -40,12 +40,6 @@ SCORE_MAP = {
     "lev_min": [("problem_1", "spatial_diff")],
     "lev_max": [("problem_1", "spatial_diff")],
 }
-
-F1_MAP = [
-    ("CLASS", "", "danger_level", "4"),
-    ("CLASS", "", "emergency_warning", "Naturlig utløste skred"),
-    ("CLASS", "", "problem_1", "pwl-slab"),
-]
 
 
 def createClustering():
@@ -90,8 +84,6 @@ class MetaMachine:
             type, days, varsom, regobs, noregions, nocause, temp, collapse, adam, fmt1, fmt4, levels, avy_idx = machine
             if type in ["skclassifier-decisiontree", "skclassifier-neural"]:
                 bm_class = SKClassifierMachine
-            elif type in ["skclustering-default"]:
-                bm_class = SKClusteringMachine
             else:
                 raise UnknownMachineId()
 
@@ -112,12 +104,6 @@ class MetaMachine:
             )
 
             for split, (training_data, test_data, _) in enumerate(ld.split()):
-                if fmt4:
-                    test_data = test_data.to_elevation_fmt_4(exclude_label=True)
-                if fmt1:
-                    test_data = test_data.to_elevation_fmt_1(exclude_label=True)
-                if levels:
-                    test_data = test_data.to_elev_class(exclude_label=True)
                 split_id = f"{type}_{data_id}_split-{split}"
                 print(f"Loading machine: {split_id}")
                 bm = bm_class.load(split_id)
@@ -132,7 +118,6 @@ class MetaMachine:
                     predicted_data = predicted_data.adam()
                 columns = predicted_data.pred.columns
                 scores_ = Score(predicted_data).calc()
-                #f1_ = predicted_data.f1().loc[F1_MAP, "f1"]
                 #path_scores = f"{root}/output/{split_id}_scores.csv"
                 #scores_ = pd.read_csv(path_scores, sep=";", header=[0, 1], index_col=[0, 1])
                 scores = scores_.abs().mean(axis=0).to_frame().values
@@ -165,8 +150,7 @@ class MetaMachine:
                 self.scores = mapped_scores if self.scores is None else pd.concat([self.scores, mapped_scores], axis=1).fillna(0)
         self.scores.to_csv("/home/aron/Downloads/mapped_scores.csv", sep=";")
 
-    def predict(self, regions=[3011, 3016, 3035], seasons=None):
-        seasons = seasons if seasons is not None else self.seasons
+    def predict(self, regions=[3011, 3016, 3035]):
         machine_scores = self.scores
         #ms_idx = machine_scores.index.to_frame().fillna("")
         #machine_scores.index = pd.MultiIndex.from_frame(ms_idx)
@@ -190,18 +174,12 @@ class MetaMachine:
         all_data = {}
         for tag in np.unique(best_models.values.flatten()):
             if tag not in all_data:
-                ld = get_data(seasons, *self.machines_conf[tag])[0]
+                ld = get_data(self.seasons, *self.machines_conf[tag])[0]
                 ld.data = ld.data.iloc[[region in regions for region in ld.data.index.get_level_values(1)]]
                 ld.label = ld.label.iloc[[region in regions for region in ld.label.index.get_level_values(1)]]
                 ld.pred = ld.pred.iloc[[region in regions for region in ld.pred.index.get_level_values(1)]]
                 ld.row_weight = ld.row_weight.iloc[
                     [region in regions for region in ld.row_weight.index.get_level_values(1)]]
-                if self.machines_conf[tag][-3]:
-                        test_data = test_data.to_elevation_fmt_4(exclude_label=True)
-                if self.machines_conf[tag][-4]:
-                    test_data = test_data.to_elevation_fmt_1(exclude_label=True)
-                if self.machines_conf[tag][-2]:
-                    test_data = test_data.to_elev_class(exclude_label=True)
                 all_data[tag] = ld
 
         ld = None
@@ -212,7 +190,7 @@ class MetaMachine:
                 labeled_data = labeled_data.from_elev_class()
             if self.machines_conf[tag][-5]:
                 labeled_data = labeled_data.adam()
-            #labeled_data = labeled_data.to_elevation_fmt_4()
+            labeled_data = labeled_data.to_elevation_fmt_4()
             labeled_data.pred = labeled_data.pred.astype(str)
             predictions[tag] = labeled_data.pred
             if ld is None:

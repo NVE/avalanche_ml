@@ -55,6 +55,9 @@ VECTOR_FREQ = {
     },
 }
 
+WET_WEIGHT = 0.14674636
+LOOSE_WEIGHT = 0.18210977
+
 class Score:
     def __init__(self, labeled_data):
         def to_vec(df):
@@ -137,7 +140,7 @@ def dist(score1, score2):
         return mindist if mindist is not None else 0
 
     weights = [3, 2, 1]
-    p_weights = [0.14674636, 0.18210977, 1., 0.25010303]
+    p_weights = [WET_WEIGHT, LOOSE_WEIGHT, 1., 0.25010303]
     maxdist = np.linalg.norm(np.array(p_weights))
     distance = 0
     prob_cols = [f"problem_{n}" for n in range(1, 4)]

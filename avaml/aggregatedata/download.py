@@ -1,5 +1,4 @@
 import json
-import math
 import os
 import pickle
 import re
@@ -166,6 +165,7 @@ WEATHER_API = {
     "temp_max": ("MaxTemperature", lambda x: x),
     "temp_lev": ("TemperatureElevation", lambda x: x),
     "temp_freeze_lev": ("FreezingLevelAltitude", lambda x: x),
+    "snow_depth-2": ("snow_depth-2", lambda x: x),
     "wind_dir_N": ("WindDirection", lambda x: x == "N"),
     "wind_dir_NE": ("WindDirection", lambda x: x == "NE"),
     "wind_dir_E": ("WindDirection", lambda x: x == "E"),
@@ -493,7 +493,47 @@ def _get_weather_obs(year, date=None, days=None, max_file_age=23):
 
     if get_new:
         futures_tuples = []
+        futures_snowdepth_tuples = []
         weather_api_native = {}
+
+        with futures.ThreadPoolExecutor(300) as executor:
+            for region in REGIONS:
+                url = "https://h-web03.nve.no/apsApi/TimeSeriesReader.svc/DistributionByDate/met_obs_v2.0/2002/24/{0}/{1}/{2}".format(
+                    region,
+                    (from_date - dt.timedelta(days=1)).isoformat(),
+                    (to_date - dt.timedelta(days=2)).isoformat(),
+                )
+                future = executor.submit(lambda: requests.get(url))
+                futures_snowdepth_tuples.append((region, 0, future))
+
+            while len(futures_snowdepth_tuples):
+                region, retries, future = futures_snowdepth_tuples.pop()
+                try:
+                    response = future.result()
+                except:
+                    continue
+                if response.status_code != requests.codes.ok:
+                    if retries < 5:
+                        url = "https://h-web03.nve.no/apsApi/TimeSeriesReader.svc/DistributionByDate/met_obs_v2.0/2002/24/{0}/{1}/{2}".format(
+                            region,
+                            (from_date - dt.timedelta(days=1)).isoformat(),
+                            (to_date - dt.timedelta(days=2)).isoformat(),
+                        )
+                        future = executor.submit(lambda: requests.get(url))
+                        futures_tuples.insert(0, (from_date, retries + 1, future))
+                    else:
+                        print(f"Failed to fetch snow depth for region {region}, skipping", file=sys.stderr)
+                    continue
+
+                timeline = response.json()["TimeLine"]
+                for day in timeline:
+                    date = dt.datetime.fromisoformat(day["FormattedDate"]).date()
+                    snow_depth = day["Regions"][0]["ElevationData"][-2]["Median"]
+                    if "snow_depth-2" not in weather_api_native:
+                        weather_api_native["snow_depth-2"] = {}
+                    weather_api_native["snow_depth-2"][(date.isoformat(), region)] = float(snow_depth)
+
+
         with futures.ThreadPoolExecutor(300) as executor:
             while from_date < to_date:
                 if from_date.month in [7, 8, 9, 10]:
@@ -506,10 +546,12 @@ def _get_weather_obs(year, date=None, days=None, max_file_age=23):
                 futures_tuples.append((from_date, 0, future))
                 from_date += dt.timedelta(days=1)
 
-
             while len(futures_tuples):
                 from_date, retries, future = futures_tuples.pop()
-                response = future.result()
+                try:
+                    response = future.result()
+                except:
+                    continue
                 if response.status_code != requests.codes.ok:
                     if retries < 5:
                         url = 'http://h-web03.nve.no/APSapi/TimeSeriesReader.svc/MountainWeather/-/{0}/no/true'.format(
@@ -614,6 +656,7 @@ def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23
         "FromDate": from_date.isoformat(),
         "ToDate": to_date.isoformat(),
         "SelectedRegistrationTypes": None,
+        "SelectedGeoHazards": [10],
         "SelectedRegions": regions,
         "NumberOfRecords": number_of_records,
         "Offset": 0
@@ -723,6 +766,8 @@ def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23
 
     rng = np.random.default_rng(1984)
     for (date, region), date_region in observations.items():
+        if region not in REGION_NEIGH:
+            continue
         for reg_key in date_region.keys():
             reg_neigh = []
             for neighbour in rng.permutation(REGION_NEIGH[region]):
@@ -734,29 +779,47 @@ def _get_regobs_obs(year, requested_types, date=None, days=None, max_file_age=23
             observations_neigh[(date, region)][reg_key] += reg_neigh
 
     df_dict = {}
-    for key, observation in observations_neigh.items():
-        # Use 2 most competent observations, and list both categories as well as scalars
-        for obs_idx in range(0, 2):
+    observations_neigh_items = sorted(observations_neigh.items(), key=lambda x: dt.date.fromisoformat(x[0][0]))
+    for key, observation in observations_neigh_items:
+        date, region = key
+        # Use  most competent observations, and list both categories as well as scalars
+        for obs_idx in range(0, 4):
             # One type of observation (test, danger signs etc.) at a time
             for regobs_type in req_set:
                 obses = observation[regobs_type] if regobs_type in observation else []
+                yesterday = (dt.date.fromisoformat(date) - dt.timedelta(days=1)).isoformat()
+                shift = len(obses)
+                yesterday_idx = obs_idx - shift
                 # Go through each requested class attribute from the specified observation type
                 for attr, cat in REGOBS_CLASSES[regobs_type].items():
                     # We handle categories using 1-hot, so we step through each category
                     for cat_name in cat.values():
-                        attr_name = f"regobs_{REG_ENG[regobs_type]}_{_camel_to_snake(attr)}_{cat_name}_{obs_idx}"
+                        attr_base = f"regobs_{REG_ENG[regobs_type]}_{_camel_to_snake(attr)}_{cat_name}"
+                        attr_name = f"{attr_base}_{obs_idx}"
+                        yesterday_name = f"{attr_base}_{yesterday_idx}"
+                        carry = 0
+                        if 0 <= yesterday_idx and yesterday_name in df_dict and (yesterday, region) in df_dict[yesterday_name]:
+                            carry = df_dict[yesterday_name][(yesterday, region)]
+
                         if attr_name not in df_dict:
                             df_dict[attr_name] = {}
-                        df_dict[attr_name][key] = obses[obs_idx][cat_name] if len(obses) > obs_idx else 0
+
+                        df_dict[attr_name][key] = obses[obs_idx][cat_name] if len(obses) > obs_idx else carry
                 # Go through all requested scalars
                 for attr, (regobs_attr, conv) in REGOBS_SCALARS[regobs_type].items():
-                    attr_name = f"regobs_{REG_ENG[regobs_type]}_{_camel_to_snake(attr)}_{obs_idx}"
+                    attr_base = f"regobs_{REG_ENG[regobs_type]}_{_camel_to_snake(attr)}"
+                    attr_name = f"{attr_base}_{obs_idx}"
+                    yesterday_name = f"{attr_base}_{yesterday_idx}"
+                    carry = 0
+                    if 0 <= yesterday_idx and yesterday_name in df_dict and (yesterday, region) in df_dict[yesterday_name]:
+                        carry = df_dict[yesterday_name][(yesterday, region)]
+
                     if attr_name not in df_dict:
                         df_dict[attr_name] = {}
                     try:
-                        df_dict[attr_name][key] = conv(obses[obs_idx][regobs_attr]) if len(obses) > obs_idx else 0
+                        df_dict[attr_name][key] = conv(obses[obs_idx][regobs_attr]) if len(obses) > obs_idx else carry
                     except TypeError:
-                        df_dict[attr_name][key] = 0
+                        df_dict[attr_name][key] = carry
 
         if "accuracy" not in df_dict:
             df_dict["accuracy"] = {}

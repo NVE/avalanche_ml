@@ -183,7 +183,7 @@ class ForecastDataset:
         self.date = date
         self.use_label = use_label
 
-        self.regobs = _get_regobs_obs(None, regobs_types, date=date, days=days)
+        self.regobs = _get_regobs_obs(None, regobs_types, date=date, days=days + 10)
         self.varsom, labels = _get_varsom_obs(None, date=date, days=days-1 if days > 0 else 1)
         self.weather = _get_weather_obs(None, date=date, days=days-2 if days > 2 else 1)
 
@@ -223,7 +223,7 @@ class ForecastDataset:
         df_label = pd.DataFrame(self.labels, dtype="U")
         days_w = {0: 1, 1: 1, 2: 1}.get(days, days - 1)
         days_v = {0: 1, 1: 2, 2: 2}.get(days, days)
-        days_r = days + 1
+        days_r = 2
         varsom_index = pd.DataFrame(self.varsom).index
         weather_index = pd.DataFrame(self.weather).index
 
@@ -274,7 +274,7 @@ class ForecastDataset:
                         except KeyError:
                             row[(column, str(n))] = 0
                 for column in self.regobs.keys():
-                    for n in range(2, days_r):
+                    for n in range(1, days_r):
                         try:
                             row[(column, str(n))] = self.regobs[column][prev_key(n)]
                         except KeyError:
@@ -313,10 +313,11 @@ class ForecastDataset:
 
             df_label.sort_index(axis=0, inplace=True)
             df_label.sort_index(axis=1, inplace=True)
-            df.sort_index(axis=0, inplace=True)
-            df_weight.sort_index(axis=0, inplace=True)
         else:
             df_label = None
+        df.sort_index(axis=0, inplace=True)
+        #df.sort_index(axis=1, inplace=True)
+        df_weight.sort_index(axis=0, inplace=True)
 
         return LabeledData(df, df_label, df_weight, days, self.regobs_types, with_varsom, self.seasons)
 
@@ -692,14 +693,12 @@ class LabeledData:
 
                 df.loc[ones, ("REAL", problem, "lev_min")] = df.loc[ones, ("REAL", problem, "lev_max")]
                 df.loc[ones, ("REAL", problem, "lev_max")] = MAX_ELEV
-                df.loc[ones, ("CLASS", problem, "lev_fill")] = "4"
 
                 df.loc[twos, ("REAL", problem, "lev_min")] = 0
-                df.loc[twos, ("CLASS", problem, "lev_fill")] = "4"
 
                 df.loc[threes, ("REAL", problem, "lev_min")] = 0
                 df.loc[threes, ("REAL", problem, "lev_max")] = MAX_ELEV
-                df.loc[threes, ("CLASS", problem, "lev_fill")] = "4"
+                df["CLASS", problem, "lev_fill"] = "4"
 
         def convert_data(df):
             prefixes = set(map(lambda y: (y[0][:-7], y[1]), filter(lambda x: re.search(r"lev_fill", x[0]), df.columns)))
@@ -789,7 +788,7 @@ class LabeledData:
                 ld.pred.loc[reversed_idx, ("REAL", subprob, "lev_min")] = average
                 ld.pred.loc[reversed_idx, ("REAL", subprob, "lev_max")] = average
 
-        ld.pred.loc[:, ["CLASS", "MULTI"]] = ld.pred.loc[:, ["CLASS", "MULTI"]].astype(str)
+        ld.pred.loc[:, ["CLASS", "MULTI"]] = ld.pred.loc[:, ["CLASS", "MULTI"]].replace(np.nan, "").astype(str)
         ld.pred["REAL"] = ld.pred["REAL"].replace("", np.nan).astype(np.float)
         return ld
 
